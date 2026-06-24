@@ -5,18 +5,40 @@ import triton
 from ml_kernel_lab.kernel import triton_kernel
 
 
-@triton.testing.perf_report(
+dtypes = [torch.float16, torch.bfloat16, torch.float32]
+
+benchmarks_hidden_dim = [
     triton.testing.Benchmark(
         x_names=['N'],
-        x_vals=[512 * i for i in range(2, 32)],
+        x_vals=[512 * i for i in range(16, 32)],
         line_arg='provider',
         line_vals=['triton', 'torch'],
         line_names=['Triton', 'Torch'],
         styles=[('blue', '-'), ('green', '-')],
-        ylabel='GB/s',
-        plot_name='rms-norm-forward',
-        args={'M': 4096, 'dtype': torch.float16},
-    ))
+        ylabel='ms',
+        plot_name=f'rms-norm-forward-latency hidden dim (dtype: {str(dtype)})',
+        args={'M': 4096, 'dtype': dtype},
+    )
+    for dtype in dtypes
+]
+
+benchmarks_sequence_length = [
+    triton.testing.Benchmark(
+        x_names=['M'],
+        x_vals=[512 * i for i in range(16, 32)],
+        line_arg='provider',
+        line_vals=['triton', 'torch'],
+        line_names=['Triton', 'Torch'],
+        styles=[('blue', '-'), ('green', '-')],
+        ylabel='ms',
+        plot_name=f'rms-norm-forward-latency sequence length (dtype: {str(dtype)})',
+        args={'N': 4096, 'dtype': dtype},
+    )
+    for dtype in dtypes
+]
+
+
+@triton.testing.perf_report(benchmarks_hidden_dim + benchmarks_sequence_length)
 def bench_rms_norm(M, N, dtype, provider, eps=1e-5, device=torch.device('cuda')):
     # create data
     x_shape = (M, N)
@@ -32,11 +54,10 @@ def bench_rms_norm(M, N, dtype, provider, eps=1e-5, device=torch.device('cuda'))
         if provider == "torch":
             return torch.nn.functional.rms_norm(x, w_shape, weight=weight, eps=eps)  # noqa: F811, E704
 
-    gbps = lambda ms: 2 * x.numel() * x.element_size() * 1e-9 / (ms * 1e-3)
     ms, min_ms, max_ms = triton.testing.do_bench(y_fwd, quantiles=quantiles, rep=500)
 
-    return gbps(ms), gbps(max_ms), gbps(min_ms)
+    return ms, max_ms, min_ms
 
 
 if __name__ == '__main__':
-    bench_rms_norm.run(print_data=True)
+    bench_rms_norm.run(print_data=True, return_df=True)
