@@ -17,6 +17,6 @@ def test_match_torch_results(shape, dtype):
     w = torch.randn(shape[-1], dtype=dtype, device='cuda')
 
     actual = triton_kernel.rms_norm_fwd(x, w, eps=1e-5)
-    expected = torch_rms_norm(x, w, eps=1e-5)
+    expected = torch_rms_norm(x, x.shape[-1], w, eps=1e-5)
 
     torch.testing.assert_close(actual, expected, rtol=1e-2, abs=1e-2)
