@@ -4,10 +4,10 @@ import triton.language as tl
 
 @triton.autotune(
     configs=[
-        triton.Config({}, num_warps=1),
-        triton.Config({}, num_warps=2),
-        triton.Config({}, num_warps=4),
-        triton.Config({}, num_warps=8),
+        triton.Config({}, num_warps=1, num_ctas=1),
+        triton.Config({}, num_warps=2, num_ctas=1),
+        triton.Config({}, num_warps=4, num_ctas=1),
+        triton.Config({}, num_warps=8, num_ctas=1),
     ],
     key=["N", "BLOCK_SIZE"],
 )
@@ -58,10 +58,10 @@ def _rms_norm_fwd_fused(
 
 @triton.autotune(
     configs=[
-        triton.Config({}, num_warps=1),
-        triton.Config({}, num_warps=2),
-        triton.Config({}, num_warps=4),
-        triton.Config({}, num_warps=8),
+        triton.Config({}, num_warps=1, num_ctas=1),
+        triton.Config({}, num_warps=2, num_ctas=1),
+        triton.Config({}, num_warps=4, num_ctas=1),
+        triton.Config({}, num_warps=8, num_ctas=1),
     ],
     key=["N", "BLOCK_SIZE"],
 )
@@ -118,7 +118,7 @@ def rms_norm_fwd(x: torch.Tensor, w: torch.Tensor, eps: float) -> torch.Tensor:
     grid = (M,)
     # num_warps = min(max(BLOCK_SIZE // 256, 1), 8)
 
-    _rms_norm_fwd_fused[grid](x, y, w, x.stride(0), N, eps, BLOCK_SIZE=BLOCK_SIZE, num_ctas=1)
+    _rms_norm_fwd_fused[grid](x, y, w, x.stride(0), N, eps, BLOCK_SIZE=BLOCK_SIZE)
 
     return y
 
@@ -138,6 +138,6 @@ def rms_norm_fwd_v2(x: torch.Tensor, w: torch.Tensor, eps: float) -> torch.Tenso
     grid = (M,)
     # num_warps = min(max(BLOCK_SIZE // 256, 1), 8)
 
-    _rms_norm_fwd_fused_v2[grid](x, y, w, x.stride(0), N, eps, BLOCK_SIZE=BLOCK_SIZE, num_ctas=1)
+    _rms_norm_fwd_fused_v2[grid](x, y, w, x.stride(0), N, eps, BLOCK_SIZE=BLOCK_SIZE)
 
     return y
