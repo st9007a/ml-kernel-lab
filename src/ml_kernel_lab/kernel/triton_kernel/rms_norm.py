@@ -2,7 +2,15 @@ import torch
 import triton
 import triton.language as tl
 
-
+@triton.autotune(
+    configs=[
+        triton.Config({}, num_warps=1),
+        triton.Config({}, num_warps=2),
+        triton.Config({}, num_warps=4),
+        triton.Config({}, num_warps=8),
+    ],
+    key=["N", "BLOCK_SIZE"],
+)
 @triton.jit
 def _rms_norm_fwd_fused(
     x_ptr,
@@ -47,6 +55,16 @@ def _rms_norm_fwd_fused(
 
         tl.store(y_ptr + cols, y, mask=mask)
 
+
+@triton.autotune(
+    configs=[
+        triton.Config({}, num_warps=1),
+        triton.Config({}, num_warps=2),
+        triton.Config({}, num_warps=4),
+        triton.Config({}, num_warps=8),
+    ],
+    key=["N", "BLOCK_SIZE"],
+)
 @triton.jit
 def _rms_norm_fwd_fused_v2(
     x_ptr,
@@ -98,9 +116,9 @@ def rms_norm_fwd(x: torch.Tensor, w: torch.Tensor, eps: float) -> torch.Tensor:
     assert N <= BLOCK_SIZE, "feature dim more than 64KB is not yet supported"
 
     grid = (M,)
-    num_warps = min(max(BLOCK_SIZE // 256, 1), 8)
+    # num_warps = min(max(BLOCK_SIZE // 256, 1), 8)
 
-    _rms_norm_fwd_fused[grid](x, y, w, x.stride(0), N, eps, BLOCK_SIZE=BLOCK_SIZE, num_warps=num_warps, num_ctas=1)
+    _rms_norm_fwd_fused[grid](x, y, w, x.stride(0), N, eps, BLOCK_SIZE=BLOCK_SIZE, num_ctas=1)
 
     return y
 
@@ -118,8 +136,8 @@ def rms_norm_fwd_v2(x: torch.Tensor, w: torch.Tensor, eps: float) -> torch.Tenso
     assert N <= BLOCK_SIZE, "feature dim more than 64KB is not yet supported"
 
     grid = (M,)
-    num_warps = min(max(BLOCK_SIZE // 256, 1), 8)
+    # num_warps = min(max(BLOCK_SIZE // 256, 1), 8)
 
-    _rms_norm_fwd_fused_v2[grid](x, y, w, x.stride(0), N, eps, BLOCK_SIZE=BLOCK_SIZE, num_warps=num_warps, num_ctas=1)
+    _rms_norm_fwd_fused_v2[grid](x, y, w, x.stride(0), N, eps, BLOCK_SIZE=BLOCK_SIZE, num_ctas=1)
 
     return y

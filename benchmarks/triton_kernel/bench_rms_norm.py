@@ -67,6 +67,9 @@ def bench_rms_norm(M, N, dtype, provider, eps=1e-5, device=torch.device('cuda'))
         if provider == "torch.compile":
             return compiled_torch_rms_norm(x, weight, eps)
 
+    y_fwd()
+    torch.cuda.synchronize()
+
     ms, min_ms, max_ms = triton.testing.do_bench(y_fwd, quantiles=quantiles, rep=500)
 
     return ms, max_ms, min_ms
