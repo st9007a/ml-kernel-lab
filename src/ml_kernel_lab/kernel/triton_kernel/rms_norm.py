@@ -60,6 +60,10 @@ def _rms_norm_fwd_fused_v2(
     """
     X, Y are 2D tensors and W is a 1D tensor.
 
+    This implementation specializes the case that BLOCK_SIZE >= N.
+    So the loop is removed and x_ptr is loaded only once (v1 implementation
+    loads x_ptr twice).
+
     Args:
       - x_ptr: pointer to input
       - y_ptr: pointer to output
@@ -75,11 +79,12 @@ def _rms_norm_fwd_fused_v2(
 
     cols = tl.arange(0, BLOCK_SIZE)
     mask = cols < N
+
     x = tl.load(x_ptr + cols, mask=mask, other=0.).to(tl.float32)
+    w = tl.load(w_ptr + cols, mask=mask)
 
     inv_rms = tl.rsqrt(tl.sum(x * x, axis=0) / N + eps)
 
-    w = tl.load(w_ptr + cols, mask=mask)
     y = x * inv_rms * w
 
     tl.store(y_ptr + cols, y, mask=mask)
