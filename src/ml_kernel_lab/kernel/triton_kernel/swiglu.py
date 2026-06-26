@@ -24,11 +24,11 @@ def _swiglu_fwd_fused(
     cols = offset + tl.arange(0, BLOCK_SIZE)
     mask = cols < n_elements
 
-    x = tl.load(x_ptr + offset + cols, mask=mask, other=0.)
-    gate = tl.load(gate_ptr + offset + cols, mask=mask, other=0.)
+    x = tl.load(x_ptr + cols, mask=mask, other=0.).to(tl.float32)
+    gate = tl.load(gate_ptr + cols, mask=mask, other=0.).to(tl.float32)
 
     y = tl.sigmoid(gate) * gate * x
-    tl.store(y_ptr + offset + cols, y, mask=mask)
+    tl.store(y_ptr + cols, y, mask=mask)
 
 
 def swiglu_fwd(x: torch.Tensor, gate: torch.Tensor) -> torch.Tensor:
