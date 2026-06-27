@@ -10,7 +10,7 @@ dtypes = [torch.float16, torch.bfloat16, torch.float32]
 benchmarks_num_elements = [
     triton.testing.Benchmark(
         x_names=['n_elements'],
-        x_vals=[2 ** i for i in range(20, 28)],
+        x_vals=[2 ** i for i in range(8, 28)],
         line_arg='provider',
         line_vals=['triton', 'torch', 'torch.compile'],
         line_names=['Triton', 'Torch', 'Torch Compile'],

@@ -39,8 +39,8 @@ def swiglu_fwd(x: torch.Tensor, gate: torch.Tensor) -> torch.Tensor:
 
     y = torch.empty_like(x)
 
-    BLOCK_SIZE = 65536 // x.element_size()
-    num_warps = min(max(BLOCK_SIZE // 256, 1), 8)
+    BLOCK_SIZE = 2048
+    num_warps = 4
     grid = (triton.cdiv(y.numel(), BLOCK_SIZE), )
 
     _swiglu_fwd_fused[grid](x, gate, y, y.numel(), BLOCK_SIZE, num_warps=num_warps)
