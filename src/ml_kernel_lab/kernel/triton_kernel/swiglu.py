@@ -4,7 +4,7 @@ import triton.language as tl
 
 
 @triton.jit
-def _swiglu_fwd_fused(
+def swiglu_fwd_fused_kernel(
     x_ptr,
     gate_ptr,
     y_ptr,
@@ -43,6 +43,6 @@ def swiglu_fwd(x: torch.Tensor, gate: torch.Tensor) -> torch.Tensor:
     num_warps = 4
     grid = (triton.cdiv(y.numel(), BLOCK_SIZE), )
 
-    _swiglu_fwd_fused[grid](x, gate, y, y.numel(), BLOCK_SIZE, num_warps=num_warps)
+    swiglu_fwd_fused_kernel[grid](x, gate, y, y.numel(), BLOCK_SIZE, num_warps=num_warps)
 
     return y
