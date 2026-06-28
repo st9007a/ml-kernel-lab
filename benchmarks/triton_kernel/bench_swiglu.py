@@ -24,7 +24,8 @@ compiled_torch_swiglu = torch.compile(torch_swiglu)
         line_names=['Triton', 'Torch', 'Torch Compile'],
         styles=[('blue', '-'), ('green', '-'), ('orange', '-')],
         ylabel='ms',
-        plot_name=f'swiglu-forward-latency num elements (dtype: {str(dtype)})',
+        plot_name='swiglu-forward-latency',
+        args={},
     )
 ])
 def bench_swiglu_n_elements(n_elements, provider, device=torch.device('cuda')):
@@ -49,16 +50,15 @@ def bench_swiglu_n_elements(n_elements, provider, device=torch.device('cuda')):
 
 
 def perf_kernel_config():
-    block_size_params = [128, 256, 512, 1024, 2048, 4096, 8192, 16384]
+    block_size_params = [128, 256, 512, 1024, 2048, 4096, 8192]
     num_warps_params = [1, 2, 4, 8]
     num_stages = 3
     num_ctas = 1
 
-    n_elements = 2 ** 28
+    batch_size_params = [1, 2, 4, 8]
+    hidden_dim_params = [8192, 28672]
+
     dtype = torch.bfloat16
-    x = torch.randn((n_elements,), device='cuda', dtype=dtype) * 0.5 - 2.3
-    gate = torch.randn((n_elements,), device='cuda', dtype=dtype)
-    y = torch.empty_like(x)
 
     data = {
         'shape.numel': [],
@@ -79,23 +79,12 @@ def perf_kernel_config():
         'perf.latency_ms.p80': [],
     }
 
-    for block_size, num_warps in itertools.product(block_size_params, num_warps_params):
+    for batch_size, hidden_dim, block_size, num_warps in itertools.product(batch_size_params, hidden_dim_params, block_size_params, num_warps_params):
+        n_elements = batch_size * hidden_dim
+        x = torch.randn((n_elements,), device='cuda', dtype=dtype) * 0.5 - 2.3
+        gate = torch.randn((n_elements,), device='cuda', dtype=dtype)
+        y = torch.empty_like(x)
         grid = (triton.cdiv(y.numel(), block_size), )
-
-        kernel = triton_kernel.swiglu_fwd_fused_kernel.warmup(
-            x,
-            gate,
-            y,
-            y.numel(),
-            BLOCK_SIZE=block_size,
-            num_warps=num_warps,
-            num_stages=num_stages,
-            num_ctas=num_ctas,
-            grid=grid,
-        )
-        kernel._init_handles()
-
-        shared_mem_bytes = kerne.metadata.shared
 
         p50, p20, p80 = triton.testing.do_bench(
             lambda: triton_kernel.swiglu_fwd_fused_kernel[grid](
@@ -111,6 +100,19 @@ def perf_kernel_config():
             rep=500,
             quantiles=[0.5, 0.2, 0.8]
         )
+
+        kernel = triton_kernel.swiglu_fwd_fused_kernel.warmup(
+            x,
+            gate,
+            y,
+            y.numel(),
+            BLOCK_SIZE=block_size,
+            num_warps=num_warps,
+            num_stages=num_stages,
+            num_ctas=num_ctas,
+            grid=grid,
+        )
+        kernel._init_handles()
 
         data['shape.numel'].append(n_elements)
         data['dtype'].append(str(dtype).replace('torch.', ''))
@@ -130,10 +132,11 @@ def perf_kernel_config():
         data['perf.latency_ms.p80'].append(p80)
 
     df = pd.DataFrame(data)
-    print(df)
+    print(df[['shape.numel', 'config.block_size', 'config.num_warps', 'perf.latency_ms.p50', 'tile.n_regs', 'tile.n_spills']])
     return df
 
 
 if __name__ == '__main__':
     # bench_swiglu_n_elements.run(print_data=True, return_df=True)
-    perf_kernel_config()
+    df = perf_kernel_config()
+    df.to_csv('benchmarks/triton_kernel/swiglu_kernel_config_perf.csv')
