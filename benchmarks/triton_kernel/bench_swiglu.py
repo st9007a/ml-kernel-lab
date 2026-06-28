@@ -1,3 +1,5 @@
+import itertools
+
 import torch
 import torch.nn.functional as F
 import triton
@@ -24,7 +26,7 @@ benchmarks_num_elements = [
 
 benchmarks_triton_config = [
     triton.testing.Benchmark(
-        x_names=['block size, num warps'],
+        x_names=['block_size', 'num_warps'],
         x_vals=list(itertools.product([512, 1024, 2048, 4096, 8192], [1, 2, 4, 8])),
         line_arg='provider',
         line_vals=['triton'],
@@ -67,15 +69,13 @@ def bench_swiglu_n_elements(n_elements, dtype, provider, device=torch.device('cu
 
 
 @triton.testing.perf_report(benchmarks_triton_config)
-def bench_swiglu_triton_config(config, dtype, provider, device=torch.device('cuda')):
-    n_elements = 8192
-    blick_size, num_warps = config
+def bench_swiglu_triton_config(block_size, num_warps, dtype, provider, device=torch.device('cuda')):
+    n_elements = 65536
     grid = (triton.cdiv(n_elements, block_size), )
     x = torch.randn((n_elements,), dtype=dtype, device=device) * 0.5 - 2.3
     gate = torch.randn((n_elements,), dtype=dtype, device=device)
     y = torch.empty_like(x)
     quantiles = [0.5, 0.2, 0.8]
-
 
     def target_fn():
         triton_kernel.swiglu_fwd_fused_kernel[grid](
