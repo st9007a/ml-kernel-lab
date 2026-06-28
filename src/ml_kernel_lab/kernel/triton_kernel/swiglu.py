@@ -39,7 +39,7 @@ def swiglu_fwd(x: torch.Tensor, gate: torch.Tensor) -> torch.Tensor:
 
     y = torch.empty_like(x)
 
-    BLOCK_SIZE = 2048
+    BLOCK_SIZE = 512
     num_warps = 4
     grid = (triton.cdiv(y.numel(), BLOCK_SIZE), )
 
