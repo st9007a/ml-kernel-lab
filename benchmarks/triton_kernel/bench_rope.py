@@ -80,8 +80,11 @@ def bench_rope(
     device=torch.device('cuda'),
 ):
     dtype = torch.bfloat16
-    q = torch.randn((batch_size, n_q_head, seq_len, head_dim), dtype=dtype, device=device)
-    k = torch.randn((batch_size, n_k_head, seq_len, head_dim), dtype=dtype, device=device)
+    q = torch.randn((batch_size, seq_len, n_q_head, head_dim), dtype=dtype, device=device)
+    k = torch.randn((batch_size, seq_len, n_k_head, head_dim), dtype=dtype, device=device)
+
+    q = q.transpose(1, 2)
+    k = k.transpose(1, 2)
 
     angles = torch.randn((1, seq_len, head_dim // 2), dtype=torch.float32, device=device)
     cos = torch.cos(angles).to(dtype)
