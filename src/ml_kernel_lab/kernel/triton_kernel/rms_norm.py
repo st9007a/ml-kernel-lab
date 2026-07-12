@@ -48,7 +48,7 @@ def rms_norm_fwd_fused_kernel(
 
 
 @triton.jit
-def rms_norm_fwd_fused_v2_kernel(
+def rms_norm_fwd_fused_kernel_v2(
     x_ptr,
     y_ptr,
     w_ptr,
@@ -125,6 +125,6 @@ def rms_norm_fwd_v2(x: torch.Tensor, w: torch.Tensor, eps: float) -> torch.Tenso
     grid = (M,)
     num_warps = min(max(BLOCK_SIZE // 256, 1), 8)
 
-    rms_norm_fwd_fused_v2_kernel[grid](x, y, w, x.stride(0), N, eps, BLOCK_SIZE=BLOCK_SIZE, num_warps=num_warps, num_ctas=1)
+    rms_norm_fwd_fused_kernel_v2[grid](x, y, w, x.stride(0), N, eps, BLOCK_SIZE=BLOCK_SIZE, num_warps=num_warps, num_ctas=1)
 
     return y

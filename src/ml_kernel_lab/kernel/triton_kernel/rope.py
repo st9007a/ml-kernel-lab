@@ -83,6 +83,8 @@ def rope_fwd(q, k, cos, sin):
     """
     q: [batch_size, n_q_head, seq_len, head_dim]
     k: [batch_size, n_k_head, seq_len, head_dim]
+
+    Note that q, k are non-contiguous. Their layout is [batch_size, seq_len, n_head, head_dim]
     """
 
     q = q.transpose(1, 2).contiguous()

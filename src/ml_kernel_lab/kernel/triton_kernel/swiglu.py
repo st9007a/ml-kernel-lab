@@ -5,7 +5,7 @@ import triton.language as tl
 
 @triton.jit
 def silu(x):
-    return x * tl.sigmoid(x)
+    return x * tl.sigmoid(x.to(tl.float32))
 
 
 @triton.jit
@@ -30,7 +30,7 @@ def swiglu_fwd_fused_kernel(
     mask = cols < n_elements
 
     x = tl.load(x_ptr + cols, mask=mask, other=0.)
-    gate = tl.load(gate_ptr + cols, mask=mask, other=0.).to(tl.float32)
+    gate = tl.load(gate_ptr + cols, mask=mask, other=0.)
 
     y = silu(gate).to(x.dtype) * x
     tl.store(y_ptr + cols, y, mask=mask)

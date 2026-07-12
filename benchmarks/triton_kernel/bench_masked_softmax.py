@@ -1,28 +1,46 @@
 import torch
-import torch.nn.functional as F
 import triton
 
 from ml_kernel_lab.kernel import triton_kernel
 
 
-def torch_rms_norm(x, weight, eps):
-    return F.rms_norm(x, weight.shape, weight=weight, eps=eps)
+def torch_masked_softmax(x, attn_mask):
+    return torch.softmax(x.masked_fill(attn_mask != 0, -float('inf')), dim=-1)
 
 
-compiled_torch_rms_norm = torch.compile(torch_rms_norm)
+compiled_torch_masked_softmax = torch.compile(torch_masked_softmax)
 
 
 @triton.testing.perf_report([
     triton.testing.Benchmark(
-        x_names=['hidden_size'],
-        x_vals=[4096, 5120, 8192, 11008, 14336, 28672],
+        x_names=['kv_len'],
+        x_vals=[128, 256, 512, 1024, 2048, 4096, 8192],
         line_arg='provider',
         line_vals=['triton_v1', 'triton_v2', 'torch', 'torch.compile'],
         line_names=['Triton v1', 'Triton v2', 'Torch', 'Torch Compile'],
         styles=[('blue', '-'), ('purple', '-'), ('green', '-'), ('orange', '-')],
         ylabel='ms',
-        plot_name='rms-norm-forward-latency-hidden-size',
-        args={'batch_size': 1, 'seq_len': 1},
+        plot_name='masked-softmax-forward-latency-kv-len',
+        args={
+            'batch_size': 1,
+            'n_heads': 32,
+            'q_len': 1,
+        },
+    ),
+    triton.testing.Benchmark(
+        x_names=['q_len'],
+        x_vals=[1, 2, 4, 8, 16, 32, 64, 128, 256, 512],
+        line_arg='provider',
+        line_vals=['triton_v1', 'triton_v2', 'torch', 'torch.compile'],
+        line_names=['Triton v1', 'Triton v2', 'Torch', 'Torch Compile'],
+        styles=[('blue', '-'), ('purple', '-'), ('green', '-'), ('orange', '-')],
+        ylabel='ms',
+        plot_name='masked-softmax-forward-latency-q-len',
+        args={
+            'batch_size': 1,
+            'n_heads': 32,
+            'kv_len': 2048,
+        },
     ),
     triton.testing.Benchmark(
         x_names=['batch_size'],
@@ -32,46 +50,40 @@ compiled_torch_rms_norm = torch.compile(torch_rms_norm)
         line_names=['Triton v1', 'Triton v2', 'Torch', 'Torch Compile'],
         styles=[('blue', '-'), ('purple', '-'), ('green', '-'), ('orange', '-')],
         ylabel='ms',
-        plot_name='rms-norm-forward-latency-batch-size',
-        args={'seq_len': 1, 'hidden_size': 8192},
-    ),
-    triton.testing.Benchmark(
-        x_names=['seq_len'],
-        x_vals=[1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024],
-        line_arg='provider',
-        line_vals=['triton_v1', 'triton_v2', 'torch', 'torch.compile'],
-        line_names=['Triton v1', 'Triton v2', 'Torch', 'Torch Compile'],
-        styles=[('blue', '-'), ('purple', '-'), ('green', '-'), ('orange', '-')],
-        ylabel='ms',
-        plot_name='rms-norm-forward-latency-seq-len',
-        args={'batch_size': 1, 'hidden_size': 8192},
+        plot_name='masked-softmax-forward-latency-batch-size',
+        args={
+            'n_heads': 32,
+            'q_len': 1,
+            'kv_len': 2048,
+        },
     ),
 ])
-def bench_rms_norm(
+def bench_masked_softmax(
     batch_size,
-    seq_len,
-    hidden_size,
+    n_heads,
+    q_len,
+    kv_len,
     provider,
-    eps=1e-5,
     device=torch.device('cuda'),
 ):
     dtype = torch.bfloat16
-    x = -2.3 + 0.5 * torch.randn((batch_size, seq_len, hidden_size), dtype=dtype, device=device)
-    weight = torch.rand((hidden_size,), dtype=dtype, device=device)
+    x = torch.randn((batch_size, n_heads, q_len, kv_len), dtype=dtype, device=device)
+    attn_mask = torch.rand((batch_size, n_heads, q_len, kv_len), device=device) < 0.15
+    attn_mask[..., 0] = False
     quantiles = [0.5, 0.2, 0.8]
 
     def target_fn():
         if provider == 'triton_v1':
-            return triton_kernel.rms_norm_fwd(x, weight, eps)
+            return triton_kernel.masked_softmax_fwd(x, attn_mask)
 
         if provider == 'triton_v2':
-            return triton_kernel.rms_norm_fwd_v2(x, weight, eps)
+            return triton_kernel.masked_softmax_fwd_v2(x, attn_mask)
 
         if provider == 'torch':
-            return torch_rms_norm(x, weight, eps)
+            return torch_masked_softmax(x, attn_mask)
 
         if provider == 'torch.compile':
-            return compiled_torch_rms_norm(x, weight, eps)
+            return compiled_torch_masked_softmax(x, attn_mask)
 
         raise ValueError(f'unknown provider: {provider}')
 
@@ -80,4 +92,4 @@ def bench_rms_norm(
 
 
 if __name__ == '__main__':
-    bench_rms_norm.run(print_data=True, return_df=True)
+    bench_masked_softmax.run(print_data=True, return_df=True)
