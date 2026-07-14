@@ -20,26 +20,12 @@ compiled_torch_masked_softmax = torch.compile(torch_masked_softmax)
         line_names=['Triton v1', 'Triton v2', 'Torch', 'Torch Compile'],
         styles=[('blue', '-'), ('purple', '-'), ('green', '-'), ('orange', '-')],
         ylabel='ms',
-        plot_name='masked-softmax-forward-latency-kv-len',
+        plot_name='masked-softmax-forward-latency-decode-kv-len',
         args={
             'batch_size': 1,
             'n_heads': 32,
             'q_len': 1,
-        },
-    ),
-    triton.testing.Benchmark(
-        x_names=['q_len'],
-        x_vals=[1, 2, 4, 8, 16, 32, 64, 128, 256, 512],
-        line_arg='provider',
-        line_vals=['triton_v1', 'triton_v2', 'torch', 'torch.compile'],
-        line_names=['Triton v1', 'Triton v2', 'Torch', 'Torch Compile'],
-        styles=[('blue', '-'), ('purple', '-'), ('green', '-'), ('orange', '-')],
-        ylabel='ms',
-        plot_name='masked-softmax-forward-latency-q-len',
-        args={
-            'batch_size': 1,
-            'n_heads': 32,
-            'kv_len': 2048,
+            'mask_q_len': 1,
         },
     ),
     triton.testing.Benchmark(
@@ -50,25 +36,48 @@ compiled_torch_masked_softmax = torch.compile(torch_masked_softmax)
         line_names=['Triton v1', 'Triton v2', 'Torch', 'Torch Compile'],
         styles=[('blue', '-'), ('purple', '-'), ('green', '-'), ('orange', '-')],
         ylabel='ms',
-        plot_name='masked-softmax-forward-latency-batch-size',
+        plot_name='masked-softmax-forward-latency-batch-decode',
         args={
             'n_heads': 32,
             'q_len': 1,
             'kv_len': 2048,
+            'mask_q_len': 1,
+        },
+    ),
+    triton.testing.Benchmark(
+        x_names=['seq_len'],
+        x_vals=[128, 256, 512, 1024, 2048],
+        line_arg='provider',
+        line_vals=['triton_v1', 'triton_v2', 'torch', 'torch.compile'],
+        line_names=['Triton v1', 'Triton v2', 'Torch', 'Torch Compile'],
+        styles=[('blue', '-'), ('purple', '-'), ('green', '-'), ('orange', '-')],
+        ylabel='ms',
+        plot_name='masked-softmax-forward-latency-prefill-seq-len',
+        args={
+            'batch_size': 1,
+            'n_heads': 32,
+            'mask_q_len': 'full',
         },
     ),
 ])
 def bench_masked_softmax(
     batch_size,
     n_heads,
-    q_len,
-    kv_len,
     provider,
+    q_len=None,
+    kv_len=None,
+    seq_len=None,
+    mask_q_len='full',
     device=torch.device('cuda'),
 ):
+    if seq_len is not None:
+        q_len = seq_len
+        kv_len = seq_len
+
     dtype = torch.bfloat16
     x = torch.randn((batch_size, n_heads, q_len, kv_len), dtype=dtype, device=device)
-    attn_mask = torch.rand((batch_size, 1, q_len, kv_len), device=device) < 0.15
+    attn_mask_q_len = 1 if mask_q_len == 1 else q_len
+    attn_mask = torch.rand((batch_size, 1, attn_mask_q_len, kv_len), device=device) < 0.15
     attn_mask[..., 0] = False
     expanded_attn_mask = attn_mask.expand(batch_size, n_heads, q_len, kv_len).contiguous()
     quantiles = [0.5, 0.2, 0.8]
