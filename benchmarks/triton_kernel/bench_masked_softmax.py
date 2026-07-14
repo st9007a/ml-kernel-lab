@@ -68,8 +68,9 @@ def bench_masked_softmax(
 ):
     dtype = torch.bfloat16
     x = torch.randn((batch_size, n_heads, q_len, kv_len), dtype=dtype, device=device)
-    attn_mask = torch.rand((batch_size, n_heads, q_len, kv_len), device=device) < 0.15
+    attn_mask = torch.rand((batch_size, 1, q_len, kv_len), device=device) < 0.15
     attn_mask[..., 0] = False
+    expanded_attn_mask = attn_mask.expand(batch_size, n_heads, q_len, kv_len).contiguous()
     quantiles = [0.5, 0.2, 0.8]
 
     def target_fn():
@@ -77,7 +78,7 @@ def bench_masked_softmax(
             return triton_kernel.masked_softmax_fwd(x, attn_mask)
 
         if provider == 'triton_v2':
-            return triton_kernel.masked_softmax_fwd_v2(x, attn_mask)
+            return triton_kernel.masked_softmax_fwd_v2(x, expanded_attn_mask)
 
         if provider == 'torch':
             return torch_masked_softmax(x, attn_mask)
