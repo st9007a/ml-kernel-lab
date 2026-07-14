@@ -16,9 +16,9 @@ compiled_torch_masked_softmax = torch.compile(torch_masked_softmax)
         x_names=['kv_len'],
         x_vals=[128, 256, 512, 1024, 2048, 4096, 8192],
         line_arg='provider',
-        line_vals=['triton_v1', 'triton_v2', 'torch', 'torch.compile'],
-        line_names=['Triton v1', 'Triton v2', 'Torch', 'Torch Compile'],
-        styles=[('blue', '-'), ('purple', '-'), ('green', '-'), ('orange', '-')],
+        line_vals=['triton_v1', 'triton_v2', 'triton_v3', 'torch', 'torch.compile'],
+        line_names=['Triton v1', 'Triton v2', 'Triton v3', 'Torch', 'Torch Compile'],
+        styles=[('blue', '-'), ('purple', '-'), ('red', '-'), ('green', '-'), ('orange', '-')],
         ylabel='ms',
         plot_name='masked-softmax-forward-latency-decode-kv-len',
         args={
@@ -32,9 +32,9 @@ compiled_torch_masked_softmax = torch.compile(torch_masked_softmax)
         x_names=['batch_size'],
         x_vals=[1, 2, 4, 8, 16],
         line_arg='provider',
-        line_vals=['triton_v1', 'triton_v2', 'torch', 'torch.compile'],
-        line_names=['Triton v1', 'Triton v2', 'Torch', 'Torch Compile'],
-        styles=[('blue', '-'), ('purple', '-'), ('green', '-'), ('orange', '-')],
+        line_vals=['triton_v1', 'triton_v2', 'triton_v3', 'torch', 'torch.compile'],
+        line_names=['Triton v1', 'Triton v2', 'Triton v3', 'Torch', 'Torch Compile'],
+        styles=[('blue', '-'), ('purple', '-'), ('red', '-'), ('green', '-'), ('orange', '-')],
         ylabel='ms',
         plot_name='masked-softmax-forward-latency-batch-decode',
         args={
@@ -48,9 +48,9 @@ compiled_torch_masked_softmax = torch.compile(torch_masked_softmax)
         x_names=['seq_len'],
         x_vals=[128, 256, 512, 1024, 2048],
         line_arg='provider',
-        line_vals=['triton_v1', 'triton_v2', 'torch', 'torch.compile'],
-        line_names=['Triton v1', 'Triton v2', 'Torch', 'Torch Compile'],
-        styles=[('blue', '-'), ('purple', '-'), ('green', '-'), ('orange', '-')],
+        line_vals=['triton_v1', 'triton_v2', 'triton_v3', 'torch', 'torch.compile'],
+        line_names=['Triton v1', 'Triton v2', 'Triton v3', 'Torch', 'Torch Compile'],
+        styles=[('blue', '-'), ('purple', '-'), ('red', '-'), ('green', '-'), ('orange', '-')],
         ylabel='ms',
         plot_name='masked-softmax-forward-latency-prefill-seq-len',
         args={
@@ -88,6 +88,9 @@ def bench_masked_softmax(
 
         if provider == 'triton_v2':
             return triton_kernel.masked_softmax_fwd_v2(x, expanded_attn_mask)
+
+        if provider == 'triton_v3':
+            return triton_kernel.masked_softmax_fwd_v3(x, attn_mask)
 
         if provider == 'torch':
             return torch_masked_softmax(x, attn_mask)
