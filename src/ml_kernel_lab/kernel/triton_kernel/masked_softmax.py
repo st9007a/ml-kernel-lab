@@ -78,6 +78,15 @@ def masked_softmax_fwd_fused_kernel_v3(
     HEAD_BLOCK: tl.constexpr,
     BLOCK_SIZE: tl.constexpr,
 ):
+    """
+    This implementation put multiple heads in the same program.
+    So it can avoid loading attention mask rows repeatedly.
+    According to the benchmarking results, its performance on prefilling
+    step is better than torch compiled function and v1 implementation.
+
+    Note that v1 implementation still outperforms torch compiled function
+    and v3 implementation on decoding step.
+    """
     pid_bq = tl.program_id(0)
     pid_h = tl.program_id(1)
 
