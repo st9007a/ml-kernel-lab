@@ -32,7 +32,7 @@ compiled_torch_attention_unfused = torch.compile(torch_attention_unfused)
         plot_name='flash-attn-v1-forward-latency-seq-len',
         args={
             'batch_size': 1,
-            'n_heads': 32,
+            'n_heads': 8,
             'head_dim': 128,
         },
     ),
@@ -47,7 +47,7 @@ compiled_torch_attention_unfused = torch.compile(torch_attention_unfused)
         plot_name='flash-attn-v1-forward-latency-batch-size',
         args={
             'seq_len': 512,
-            'n_heads': 32,
+            'n_heads': 8,
             'head_dim': 128,
         },
     ),
@@ -62,7 +62,7 @@ compiled_torch_attention_unfused = torch.compile(torch_attention_unfused)
         plot_name='flash-attn-v1-forward-latency-head-dim',
         args={
             'batch_size': 1,
-            'n_heads': 32,
+            'n_heads': 8,
             'seq_len': 512,
         },
     ),

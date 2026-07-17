@@ -53,14 +53,15 @@ def flash_attention_v1_fwd_fused_kernel(
 
     # load q tile
     q_tile_offsets = b * q_stride_b + h * q_stride_h + q_idx[:, None] * q_stride_n + d_offsets[None, :]
-    q_tile = tl.load(q_ptr + q_tile_offsets, mask=q_tile_mask, other=0.).to(tl.float32)
+    q_tile = tl.load(q_ptr + q_tile_offsets, mask=q_tile_mask, other=0.)
 
     # exp sum
     l = tl.zeros((pad_q_tile_size,), dtype=tl.float32)
     # max
     m = tl.full((pad_q_tile_size,), value=-float('inf'), dtype=tl.float32)
     # accumulated output
-    acc = tl.zeros_like(q_tile)
+    #acc = tl.zeros_like(q_tile)
+    acc = tl.zeros((pad_q_tile_size, pad_head_dim), dtype=tl.float32)
 
     # loop over k/v tiles
     for kv_tile_id in tl.range(0, n_kv_tiles):
@@ -69,12 +70,12 @@ def flash_attention_v1_fwd_fused_kernel(
         # load k tile, load in transposed order
         k_tile_offsets = b * k_stride_b + h * k_stride_h + kv_idx[None, :] * k_stride_n + d_offsets[:, None]
         k_tile_mask = (kv_idx[None, :] < seq_len) & (d_offsets[:, None] < head_dim)
-        k_tile = tl.load(k_ptr + k_tile_offsets, mask=k_tile_mask, other=0.).to(tl.float32)
+        k_tile = tl.load(k_ptr + k_tile_offsets, mask=k_tile_mask, other=0.)
 
         # load v tile
         v_tile_offsets = b * v_stride_b + h * v_stride_h + kv_idx[:, None] * v_stride_n + d_offsets[None, :]
         v_tile_mask = (kv_idx[:, None] < seq_len) & (d_offsets[None, :] < head_dim)
-        v_tile = tl.load(v_ptr + v_tile_offsets, mask=v_tile_mask, other=0.).to(tl.float32)
+        v_tile = tl.load(v_ptr + v_tile_offsets, mask=v_tile_mask, other=0.)
 
         # s = q @ k^T
         s_tile = tl.dot(q_tile, k_tile) * sm_scale
@@ -82,6 +83,7 @@ def flash_attention_v1_fwd_fused_kernel(
 
         m_new = tl.maximum(m, tl.max(s_tile, axis=1))
         p_tile = tl.exp(s_tile - m_new[:, None])
+        p_tile = p_tile.to(v_tile.dtype)
         alpha = tl.exp(m - m_new)
         l_new = alpha * l + tl.sum(p_tile, axis=1)
 
@@ -124,8 +126,8 @@ def flash_attention_v1_fwd(
     B, H, N, D = q.shape
 
     # TODO: tune tile size and consider SRAM size
-    q_tile_size = 32
-    k_tile_size = 32
+    q_tile_size = 128
+    k_tile_size = 64
     n_q_tiles = triton.cdiv(N, q_tile_size)
     n_kv_tiles = triton.cdiv(N, k_tile_size)
     grid = (n_q_tiles, B * H)
@@ -157,6 +159,7 @@ def flash_attention_v1_fwd(
         triton.next_power_of_2(D),
         triton.next_power_of_2(q_tile_size),
         triton.next_power_of_2(k_tile_size),
+        num_warps=8,
     )
 
     return out
