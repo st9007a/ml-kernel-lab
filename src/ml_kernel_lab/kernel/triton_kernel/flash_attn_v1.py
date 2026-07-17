@@ -60,7 +60,7 @@ def flash_attention_v1_fwd_fused_kernel(
     # max
     m = tl.full((pad_q_tile_size,), value=-float('inf'), dtype=tl.float32)
     # accumulated output
-    acc = tl.zero_like(q_tile)
+    acc = tl.zeros_like(q_tile)
 
     # loop over k/v tiles
     for kv_tile_id in tl.range(0, n_kv_tiles):
