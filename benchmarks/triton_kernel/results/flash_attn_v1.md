@@ -7,19 +7,25 @@
 
 ```
 flash-attn-v1-forward-latency-seq-len:
-   seq_len    Triton  Torch Unfused  Torch Unfused Compile  Torch SDPA  Torch SDPA Compile
-0    128.0  0.016032       0.027296               0.017856    0.017632            0.017952
-1    256.0  0.021504       0.051456               0.031136    0.031392            0.031168
-2    512.0  0.058560       0.124832               0.055584    0.057280            0.057728
-3   1024.0  0.146560       0.503424               0.125248    0.125312            0.125344
+   seq_len    Triton  Torch Unfused  Torch Unfused Compile  Torch SDPA
+0    128.0  0.014528       0.024896               0.017568    0.017216
+1    256.0  0.020752       0.051840               0.031008    0.030784
+2    512.0  0.058656       0.125600               0.056128    0.057392
+3   1024.0  0.145216       0.497440               0.123168    0.123104
+flash-attn-v1-causal-forward-latency-seq-len:
+   seq_len    Triton  Torch Unfused  Torch Unfused Compile  Torch SDPA
+0    128.0  0.014816       0.032992               0.022752    0.012192
+1    256.0  0.022080       0.063808               0.047200    0.020464
+2    512.0  0.050240       0.154576               0.087264    0.041696
+3   1024.0  0.120512       0.718832               0.340416    0.085984
 flash-attn-v1-forward-latency-batch-size:
-   batch_size    Triton  Torch Unfused  Torch Unfused Compile  Torch SDPA  Torch SDPA Compile
-0         1.0  0.058368       0.124960               0.057312    0.057664            0.057312
-1         2.0  0.088096       0.241424               0.086816    0.086880            0.086864
-2         4.0  0.165056       0.528672               0.144832    0.144864            0.144896
-3         8.0  0.299232       1.205216               0.262816    0.263168            0.263168
+   batch_size    Triton  Torch Unfused  Torch Unfused Compile  Torch SDPA
+0         1.0  0.058816       0.125248               0.057376    0.057216
+1         2.0  0.087456       0.241952               0.086592    0.086496
+2         4.0  0.162912       0.530048               0.142624    0.142752
+3         8.0  0.298256       1.206304               0.258000    0.258144
 flash-attn-v1-forward-latency-head-dim:
-   head_dim    Triton  Torch Unfused  Torch Unfused Compile  Torch SDPA  Torch SDPA Compile
-0      64.0  0.033792       0.122864               0.528928    0.039552            0.039360
-1     128.0  0.059072       0.124928               0.532128    0.057760            0.057376
+   head_dim    Triton  Torch Unfused  Torch Unfused Compile  Torch SDPA
+0      64.0  0.028448       0.121888               0.515184    0.039072
+1     128.0  0.058784       0.125344               0.515456    0.057408
 ```

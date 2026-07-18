@@ -76,17 +76,16 @@ def flash_attention_v1_fwd_fused_kernel(
         kv_idx = kv_tile_id * k_tile_size + k_offsets
 
         # load k tile, load in transposed order
-        k_tile_offsets = b * k_stride_b + h * k_stride_h + kv_idx[None, :] * k_stride_n + d_offsets[:, None]
-        k_tile_mask = (kv_idx[None, :] < seq_len) & (d_offsets[:, None] < head_dim)
+        k_tile_offsets = b * k_stride_b + h * k_stride_h + kv_idx[:, None] * k_stride_n + d_offsets[None, :]
+        k_tile_mask = (kv_idx[:, None] < seq_len) & (d_offsets[None, :] < head_dim)
         k_tile = tl.load(k_ptr + k_tile_offsets, mask=k_tile_mask, other=0.)
 
         # load v tile
         v_tile_offsets = b * v_stride_b + h * v_stride_h + kv_idx[:, None] * v_stride_n + d_offsets[None, :]
-        v_tile_mask = (kv_idx[:, None] < seq_len) & (d_offsets[None, :] < head_dim)
-        v_tile = tl.load(v_ptr + v_tile_offsets, mask=v_tile_mask, other=0.)
+        v_tile = tl.load(v_ptr + v_tile_offsets, mask=k_tile_mask, other=0.)
 
         # s = q @ k^T
-        s_tile = tl.dot(q_tile, k_tile) * sm_scale
+        s_tile = tl.dot(q_tile, tl.trans(k_tile, (1, 0))) * sm_scale
 
         if is_causal:
             s_tile = tl.where((kv_idx[None, :] <= q_idx[:, None]) & (kv_idx[None, :] < seq_len), s_tile, -float('inf'))
@@ -140,7 +139,7 @@ def flash_attention_v1_fwd(
 
     # TODO: tune tile size and consider SRAM size
     q_tile_size = 128
-    k_tile_size = 64
+    k_tile_size = 32
     n_q_tiles = triton.cdiv(N, q_tile_size)
     n_kv_tiles = triton.cdiv(N, k_tile_size)
     grid = (n_q_tiles, B * H)
