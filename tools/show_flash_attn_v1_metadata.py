@@ -65,11 +65,20 @@ def get_attr(obj: Any, names: list[str]) -> Any:
 def read_metadata(compiled: Any) -> dict[str, Any]:
     metadata = getattr(compiled, "metadata", None)
     return {
-        "tile.n_regs": get_attr(compiled, ["n_regs", "num_regs"]),
-        "tile.n_spills": get_attr(compiled, ["n_spills", "num_spills"]),
-        "tile.n_max_threads": get_attr(compiled, ["n_max_threads", "max_threads"]),
-        "tile.shared_mem_bytes": get_attr(metadata, ["shared", "shared_memory", "shared_mem"]),
+        "regs": get_attr(compiled, ["n_regs", "num_regs"]),
+        "spills": get_attr(compiled, ["n_spills", "num_spills"]),
+        "threads": get_attr(compiled, ["n_max_threads", "max_threads"]),
+        "shared": get_attr(metadata, ["shared", "shared_memory", "shared_mem"]),
     }
+
+
+def format_status(exc: Exception) -> str:
+    message = str(exc).splitlines()[0]
+    if "out of resource: shared memory" in message:
+        return "oom_shared"
+    if "OutOfResources" in type(exc).__name__:
+        return "out_of_resources"
+    return f"error:{type(exc).__name__}"
 
 
 def warmup_case(case: Case, config: Config, device: torch.device) -> dict[str, Any]:
@@ -123,17 +132,16 @@ def warmup_case(case: Case, config: Config, device: torch.device) -> dict[str, A
 
     return {
         "case": case.name,
-        "variant": "causal" if case.is_causal else "noncausal",
-        "shape.B": case.batch_size,
-        "shape.H": case.n_heads,
-        "shape.N": case.seq_len,
-        "shape.D": case.head_dim,
-        "config.q_tile": config.q_tile_size,
-        "config.k_tile": config.k_tile_size,
-        "config.num_warps": config.num_warps,
-        "config.num_stages": config.num_stages,
-        "launch.grid_x": grid[0],
-        "launch.grid_y": grid[1],
+        "mode": "causal" if case.is_causal else "plain",
+        "B": case.batch_size,
+        "H": case.n_heads,
+        "N": case.seq_len,
+        "D": case.head_dim,
+        "Q": config.q_tile_size,
+        "KV": config.k_tile_size,
+        "warps": config.num_warps,
+        "stages": config.num_stages,
+        "grid": f"{grid[0]}x{grid[1]}",
         **read_metadata(compiled),
         "status": "ok",
     }
@@ -142,21 +150,20 @@ def warmup_case(case: Case, config: Config, device: torch.device) -> dict[str, A
 def print_rows(rows: list[dict[str, Any]]) -> None:
     columns = [
         "case",
-        "variant",
-        "shape.B",
-        "shape.H",
-        "shape.N",
-        "shape.D",
-        "config.q_tile",
-        "config.k_tile",
-        "config.num_warps",
-        "config.num_stages",
-        "launch.grid_x",
-        "launch.grid_y",
-        "tile.n_regs",
-        "tile.n_spills",
-        "tile.n_max_threads",
-        "tile.shared_mem_bytes",
+        "mode",
+        "B",
+        "H",
+        "N",
+        "D",
+        "Q",
+        "KV",
+        "warps",
+        "stages",
+        "grid",
+        "regs",
+        "spills",
+        "threads",
+        "shared",
         "status",
     ]
     widths = {
@@ -190,16 +197,17 @@ def main() -> None:
                 rows.append(
                     {
                         "case": case.name,
-                        "variant": "causal" if case.is_causal else "noncausal",
-                        "shape.B": case.batch_size,
-                        "shape.H": case.n_heads,
-                        "shape.N": case.seq_len,
-                        "shape.D": case.head_dim,
-                        "config.q_tile": config.q_tile_size,
-                        "config.k_tile": config.k_tile_size,
-                        "config.num_warps": config.num_warps,
-                        "config.num_stages": config.num_stages,
-                        "status": f"error: {type(exc).__name__}: {exc}",
+                        "mode": "causal" if case.is_causal else "plain",
+                        "B": case.batch_size,
+                        "H": case.n_heads,
+                        "N": case.seq_len,
+                        "D": case.head_dim,
+                        "Q": config.q_tile_size,
+                        "KV": config.k_tile_size,
+                        "warps": config.num_warps,
+                        "stages": config.num_stages,
+                        "grid": "",
+                        "status": format_status(exc),
                     }
                 )
 

@@ -49,7 +49,9 @@ def flash_attention_v1_fwd_fused_kernel(
     k_offsets = tl.arange(0, pad_k_tile_size)
     d_offsets = tl.arange(0, pad_head_dim)
 
-    q_idx = q_tile_id * q_tile_size + q_offsets
+    q_start = q_tile_id * q_tile_size
+    q_end = tl.minimum(q_start + q_tile_size - 1, seq_len - 1)
+    q_idx = q_start + q_offsets
     q_tile_mask = (q_idx[:, None] < seq_len) & (d_offsets[None, :] < head_dim)
 
     # load q tile
@@ -64,8 +66,13 @@ def flash_attention_v1_fwd_fused_kernel(
     #acc = tl.zeros_like(q_tile)
     acc = tl.zeros((pad_q_tile_size, pad_head_dim), dtype=tl.float32)
 
+    if is_causal:
+        n_kv_tiles_loop = tl.cdiv(q_end + 1, k_tile_size)
+    else:
+        n_kv_tiles_loop = n_kv_tiles
+
     # loop over k/v tiles
-    for kv_tile_id in tl.range(0, n_kv_tiles):
+    for kv_tile_id in tl.range(0, n_kv_tiles_loop):
         kv_idx = kv_tile_id * k_tile_size + k_offsets
 
         # load k tile, load in transposed order
