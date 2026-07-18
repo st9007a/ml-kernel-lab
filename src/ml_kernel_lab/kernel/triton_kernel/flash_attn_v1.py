@@ -33,6 +33,7 @@ def flash_attention_v1_fwd_fused_kernel(
     pad_head_dim: tl.constexpr,
     pad_q_tile_size: tl.constexpr,
     pad_k_tile_size: tl.constexpr,
+    is_causal: tl.constexpr,
 ):
     """
     BLOCK_SIZE_M: q tile size
@@ -79,7 +80,11 @@ def flash_attention_v1_fwd_fused_kernel(
 
         # s = q @ k^T
         s_tile = tl.dot(q_tile, k_tile) * sm_scale
-        s_tile = tl.where(kv_idx[None, :] < seq_len, s_tile, -float('inf'))
+
+        if is_causal:
+            s_tile = tl.where((kv_idx[None, :] <= q_idx[:, None]) & (kv_idx[None, :] < seq_len), s_tile, -float('inf'))
+        else:
+            s_tile = tl.where(kv_idx[None, :] < seq_len, s_tile, -float('inf'))
 
         m_new = tl.maximum(m, tl.max(s_tile, axis=1))
         p_tile = tl.exp(s_tile - m_new[:, None])
@@ -102,6 +107,7 @@ def flash_attention_v1_fwd(
     q: torch.Tensor,
     k: torch.Tensor,
     v: torch.Tensor,
+    is_causal: bool = False,
 ) -> torch.Tensor:
     """
     q = [B, H, Q, D]
@@ -159,6 +165,7 @@ def flash_attention_v1_fwd(
         triton.next_power_of_2(D),
         triton.next_power_of_2(q_tile_size),
         triton.next_power_of_2(k_tile_size),
+        is_causal,
         num_warps=8,
     )
 
