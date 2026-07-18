@@ -3,7 +3,8 @@
 * CUDA Version: 12.8
 * Triton Version: 3.4.0
 * Torch Version: 2.8.0+cu128
-* GPU: RTX 2000 Ada
+
+## RTX 2000 Ada
 
 ```
 swiglu-forward-latency-intermediate-size:
@@ -21,4 +22,24 @@ swiglu-forward-latency-batch-size:
 2         4.0  0.011168  0.013184       0.010992
 3         8.0  0.014336  0.016416       0.015136
 4        16.0  0.022464  0.026112       0.024672
+```
+
+## RTX 5090
+
+```
+swiglu-forward-latency-intermediate-size:
+   intermediate_size    Triton     Torch  Torch Compile
+0             8192.0  0.004096  0.006144       0.004096
+1            11008.0  0.004096  0.008192       0.004096
+2            14336.0  0.004096  0.006144       0.004096
+3            18944.0  0.004096  0.007776       0.004096
+4            28672.0  0.004096  0.006144       0.004096
+5            57344.0  0.004096  0.006144       0.004096
+swiglu-forward-latency-batch-size:
+   batch_size    Triton     Torch  Torch Compile
+0         1.0  0.004096  0.006144       0.004096
+1         2.0  0.004096  0.006144       0.004096
+2         4.0  0.004160  0.008192       0.004256
+3         8.0  0.006016  0.009792       0.006016
+4        16.0  0.006144  0.010240       0.006144
 ```
