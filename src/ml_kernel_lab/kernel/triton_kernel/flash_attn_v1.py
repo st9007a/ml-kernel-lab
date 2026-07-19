@@ -23,7 +23,6 @@ def flash_attention_v1_fwd_fused_kernel(
     o_stride_b: tl.constexpr,
     o_stride_h: tl.constexpr,
     o_stride_n: tl.constexpr,
-    n_kv_tiles: tl.constexpr,
     n_heads: tl.constexpr,
     seq_len: tl.constexpr,
     head_dim: tl.constexpr,
@@ -50,6 +49,7 @@ def flash_attention_v1_fwd_fused_kernel(
     d_offsets = tl.arange(0, pad_head_dim)
 
     q_start = q_tile_id * q_tile_size
+    q_start = tl.multiple_of(q_start, q_tile_size)
     q_end = tl.minimum(q_start + q_tile_size - 1, seq_len - 1)
     q_idx = q_start + q_offsets
     q_tile_mask = (q_idx[:, None] < seq_len) & (d_offsets[None, :] < head_dim)
@@ -67,15 +67,16 @@ def flash_attention_v1_fwd_fused_kernel(
     acc = tl.zeros((pad_q_tile_size, pad_head_dim), dtype=tl.float32)
 
     if is_causal:
-        n_kv_tiles_loop = tl.cdiv(q_end + 1, k_tile_size)
+        k_end = tl.minimum((q_tile_id + 1) * q_tile_size, seq_len)
     else:
-        n_kv_tiles_loop = n_kv_tiles
+        k_end = seq_len
 
     # loop over k/v tiles
-    for kv_tile_id in tl.range(0, n_kv_tiles_loop):
-        kv_idx = kv_tile_id * k_tile_size + k_offsets
+    for k_start in tl.range(0, k_end, k_tile_size):
+        k_start = tl.multiple_of(k_start, k_tile_size)
+        kv_idx = k_start + k_offsets
 
-        # load k tile, load in transposed order
+        # load k tile
         k_tile_offsets = b * k_stride_b + h * k_stride_h + kv_idx[:, None] * k_stride_n + d_offsets[None, :]
         k_tile_mask = (kv_idx[:, None] < seq_len) & (d_offsets[None, :] < head_dim)
         k_tile = tl.load(k_ptr + k_tile_offsets, mask=k_tile_mask, other=0.)
@@ -141,7 +142,6 @@ def flash_attention_v1_fwd(
     q_tile_size = 128
     k_tile_size = 32
     n_q_tiles = triton.cdiv(N, q_tile_size)
-    n_kv_tiles = triton.cdiv(N, k_tile_size)
     grid = (n_q_tiles, B * H)
 
     flash_attention_v1_fwd_fused_kernel[grid](
@@ -161,7 +161,6 @@ def flash_attention_v1_fwd(
         out.stride(0),
         out.stride(1),
         out.stride(2),
-        n_kv_tiles,
         H,
         N,
         D,
