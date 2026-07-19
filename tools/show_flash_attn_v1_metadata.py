@@ -90,7 +90,6 @@ def warmup_case(case: Case, config: Config, device: torch.device) -> dict[str, A
     out = torch.empty_like(q)
 
     n_q_tiles = triton.cdiv(case.seq_len, config.q_tile_size)
-    n_kv_tiles = triton.cdiv(case.seq_len, config.k_tile_size)
     grid = (n_q_tiles, case.batch_size * case.n_heads)
 
     compiled = flash_attention_v1_fwd_fused_kernel.warmup(
@@ -110,7 +109,6 @@ def warmup_case(case: Case, config: Config, device: torch.device) -> dict[str, A
         out.stride(0),
         out.stride(1),
         out.stride(2),
-        n_kv_tiles,
         case.n_heads,
         case.seq_len,
         case.head_dim,

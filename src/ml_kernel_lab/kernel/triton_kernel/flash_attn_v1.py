@@ -5,6 +5,13 @@ import triton
 import triton.language as tl
 
 
+@triton.heuristics(
+    {
+        'EVEN_M': lambda args: args['seq_len'] % args['q_tile_size'] == 0,
+        'EVEN_N': lambda args: args['seq_len'] % args['k_tile_size'] == 0,
+        'EVEN_HEADDIM': lambda args: args['head_dim'] == args['pad_head_dim'],
+    }
+)
 @triton.jit
 def flash_attention_v1_fwd_fused_kernel(
     q_ptr,
@@ -33,6 +40,9 @@ def flash_attention_v1_fwd_fused_kernel(
     pad_q_tile_size: tl.constexpr,
     pad_k_tile_size: tl.constexpr,
     is_causal: tl.constexpr,
+    EVEN_M: tl.constexpr,
+    EVEN_N: tl.constexpr,
+    EVEN_HEADDIM: tl.constexpr,
 ):
     """
     BLOCK_SIZE_M: q tile size
@@ -52,11 +62,17 @@ def flash_attention_v1_fwd_fused_kernel(
     q_start = tl.multiple_of(q_start, q_tile_size)
     q_end = tl.minimum(q_start + q_tile_size - 1, seq_len - 1)
     q_idx = q_start + q_offsets
-    q_tile_mask = (q_idx[:, None] < seq_len) & (d_offsets[None, :] < head_dim)
+    q_tile_offsets = b * q_stride_b + h * q_stride_h + q_idx[:, None] * q_stride_n + d_offsets[None, :]
 
     # load q tile
-    q_tile_offsets = b * q_stride_b + h * q_stride_h + q_idx[:, None] * q_stride_n + d_offsets[None, :]
-    q_tile = tl.load(q_ptr + q_tile_offsets, mask=q_tile_mask, other=0.)
+    if EVEN_M and EVEN_HEADDIM:
+        q_tile = tl.load(q_ptr + q_tile_offsets)
+    elif EVEN_M:
+        q_tile = tl.load(q_ptr + q_tile_offsets, mask=d_offsets[None, :] < head_dim, other=0.)
+    elif EVEN_HEADDIM:
+        q_tile = tl.load(q_ptr + q_tile_offsets, mask=q_idx[:, None] < seq_len, other=0.)
+    else:
+        q_tile = tl.load(q_ptr + q_tile_offsets, mask=(q_idx[:, None] < seq_len) & (d_offsets[None, :] < head_dim), other=0.)
 
     # exp sum
     l = tl.zeros((pad_q_tile_size,), dtype=tl.float32)
@@ -78,12 +94,15 @@ def flash_attention_v1_fwd_fused_kernel(
 
         # load k tile
         k_tile_offsets = b * k_stride_b + h * k_stride_h + kv_idx[:, None] * k_stride_n + d_offsets[None, :]
-        k_tile_mask = (kv_idx[:, None] < seq_len) & (d_offsets[None, :] < head_dim)
-        k_tile = tl.load(k_ptr + k_tile_offsets, mask=k_tile_mask, other=0.)
 
-        # load v tile
-        v_tile_offsets = b * v_stride_b + h * v_stride_h + kv_idx[:, None] * v_stride_n + d_offsets[None, :]
-        v_tile = tl.load(v_ptr + v_tile_offsets, mask=k_tile_mask, other=0.)
+        if EVEN_N and EVEN_HEADDIM:
+            k_tile = tl.load(k_ptr + k_tile_offsets)
+        elif EVEN_N:
+            k_tile = tl.load(k_ptr + k_tile_offsets, mask=d_offsets[None, :] < head_dim, other=0.)
+        elif EVEN_HEADDIM:
+            k_tile = tl.load(k_ptr + k_tile_offsets, mask=kv_idx[:, None] < seq_len, other=0.)
+        else:
+            k_tile = tl.load(k_ptr + k_tile_offsets, mask=(kv_idx[:, None] < seq_len) & (d_offsets[None, :] < head_dim), other=0.)
 
         # s = q @ k^T
         s_tile = tl.dot(q_tile, tl.trans(k_tile, (1, 0))) * sm_scale
@@ -95,6 +114,19 @@ def flash_attention_v1_fwd_fused_kernel(
 
         m_new = tl.maximum(m, tl.max(s_tile, axis=1))
         p_tile = tl.exp(s_tile - m_new[:, None])
+
+        # load v tile
+        v_tile_offsets = b * v_stride_b + h * v_stride_h + kv_idx[:, None] * v_stride_n + d_offsets[None, :]
+
+        if EVEN_N and EVEN_HEADDIM:
+            v_tile = tl.load(v_ptr + v_tile_offsets)
+        elif EVEN_N:
+            v_tile = tl.load(v_ptr + v_tile_offsets, mask=d_offsets[None, :] < head_dim, other=0.)
+        elif EVEN_HEADDIM:
+            v_tile = tl.load(v_ptr + v_tile_offsets, mask=kv_idx[:, None] < seq_len, other=0.)
+        else:
+            v_tile = tl.load(v_ptr + v_tile_offsets, mask=(kv_idx[:, None] < seq_len) & (d_offsets[None, :] < head_dim), other=0.)
+
         p_tile = p_tile.to(v_tile.dtype)
         alpha = tl.exp(m - m_new)
         l_new = alpha * l + tl.sum(p_tile, axis=1)
@@ -107,7 +139,14 @@ def flash_attention_v1_fwd_fused_kernel(
     o_tile_offsets = b * o_stride_b + h * o_stride_h + q_idx[:, None] * o_stride_n + d_offsets[None, :]
     o_tile = acc / l[:, None]
 
-    tl.store(out_ptr + o_tile_offsets, o_tile, mask=q_tile_mask)
+    if EVEN_M and EVEN_HEADDIM:
+        tl.store(out_ptr + o_tile_offsets, o_tile)
+    elif EVEN_M:
+        tl.store(out_ptr + o_tile_offsets, o_tile, mask=d_offsets[None, :] < head_dim)
+    elif EVEN_HEADDIM:
+        tl.store(out_ptr + o_tile_offsets, o_tile, mask=q_idx[:, None] < seq_len)
+    else:
+        tl.store(out_ptr + o_tile_offsets, o_tile, mask=(q_idx[:, None] < seq_len) & (d_offsets[None, :] < head_dim))
 
 
 def flash_attention_v1_fwd(
