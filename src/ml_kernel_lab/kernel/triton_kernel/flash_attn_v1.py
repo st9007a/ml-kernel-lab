@@ -79,7 +79,6 @@ def flash_attention_v1_fwd_fused_kernel(
     # max
     m = tl.full((pad_q_tile_size,), value=-float('inf'), dtype=tl.float32)
     # accumulated output
-    #acc = tl.zeros_like(q_tile)
     acc = tl.zeros((pad_q_tile_size, pad_head_dim), dtype=tl.float32)
 
     if is_causal:
@@ -182,6 +181,7 @@ def flash_attention_v1_fwd(
     k_tile_size = 32
     n_q_tiles = triton.cdiv(N, q_tile_size)
     grid = (n_q_tiles, B * H)
+    num_warps = 4 if D <= 64 else 8
 
     flash_attention_v1_fwd_fused_kernel[grid](
         q,
@@ -210,7 +210,7 @@ def flash_attention_v1_fwd(
         triton.next_power_of_2(q_tile_size),
         triton.next_power_of_2(k_tile_size),
         is_causal,
-        num_warps=8,
+        num_warps=num_warps,
     )
 
     return out
