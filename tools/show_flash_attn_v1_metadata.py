@@ -9,6 +9,9 @@ import triton
 from ml_kernel_lab.kernel.triton_kernel.flash_attn_v1 import flash_attention_v1_fwd_fused_kernel
 
 
+RAW_KERNEL = getattr(flash_attention_v1_fwd_fused_kernel, "fn", flash_attention_v1_fwd_fused_kernel)
+
+
 @dataclass(frozen=True)
 class Case:
     name: str
@@ -78,6 +81,8 @@ def format_status(exc: Exception) -> str:
         return "oom_shared"
     if "OutOfResources" in type(exc).__name__:
         return "out_of_resources"
+    if message:
+        return f"error:{type(exc).__name__}: {message[:96]}"
     return f"error:{type(exc).__name__}"
 
 
@@ -92,7 +97,11 @@ def warmup_case(case: Case, config: Config, device: torch.device) -> dict[str, A
     n_q_tiles = triton.cdiv(case.seq_len, config.q_tile_size)
     grid = (n_q_tiles, case.batch_size * case.n_heads)
 
-    compiled = flash_attention_v1_fwd_fused_kernel.warmup(
+    pad_head_dim = triton.next_power_of_2(case.head_dim)
+    pad_q_tile_size = triton.next_power_of_2(config.q_tile_size)
+    pad_k_tile_size = triton.next_power_of_2(config.k_tile_size)
+
+    compiled = RAW_KERNEL.warmup(
         q,
         k,
         v,
@@ -109,16 +118,19 @@ def warmup_case(case: Case, config: Config, device: torch.device) -> dict[str, A
         out.stride(0),
         out.stride(1),
         out.stride(2),
-        case.n_heads,
-        case.seq_len,
-        case.head_dim,
-        1.0 / math.sqrt(case.head_dim),
-        config.q_tile_size,
-        config.k_tile_size,
-        triton.next_power_of_2(case.head_dim),
-        triton.next_power_of_2(config.q_tile_size),
-        triton.next_power_of_2(config.k_tile_size),
-        case.is_causal,
+        n_heads=case.n_heads,
+        seq_len=case.seq_len,
+        head_dim=case.head_dim,
+        sm_scale=1.0 / math.sqrt(case.head_dim),
+        q_tile_size=config.q_tile_size,
+        k_tile_size=config.k_tile_size,
+        pad_head_dim=pad_head_dim,
+        pad_q_tile_size=pad_q_tile_size,
+        pad_k_tile_size=pad_k_tile_size,
+        is_causal=case.is_causal,
+        EVEN_M=case.seq_len % config.q_tile_size == 0,
+        EVEN_N=case.seq_len % config.k_tile_size == 0,
+        EVEN_HEADDIM=case.head_dim == pad_head_dim,
         grid=grid,
         num_warps=config.num_warps,
         num_stages=config.num_stages,
