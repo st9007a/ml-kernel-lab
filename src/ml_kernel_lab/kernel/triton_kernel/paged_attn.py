@@ -39,7 +39,6 @@ def single_query_paged_kv_attention_fused_kernel(
     d_offset = tl.arange(0, pad_head_dim)
     k_offset = tl.arange(0, pad_block_size)
     q = tl.load(q_ptr + pid * q_stride_row + d_offset, mask=d_offset < head_dim, other=0.)
-    q = q.view(1, pad_head_dim)
 
     # exp sum
     l = 0.
@@ -62,9 +61,9 @@ def single_query_paged_kv_attention_fused_kernel(
         v_block_offset = physical_block_idx * v_stride_n + hq * v_stride_h + k_offset[:, None] * v_stride_b + d_offset[None, :]
         v = tl.load(v_cache_ptr + v_block_offset, mask=k_mask, other=0.)
 
-        # flash attn v1 style implementation
-        s = tl.dot(q, tl.trans(k, (1, 0))) * sm_scale
-        s = tl.where(token_mask[None, :], s, -float('inf'))
+        # Single-query decode: compute q @ K^T as a vector reduction.
+        s = tl.sum(k * q[None, :], axis=1) * sm_scale
+        s = tl.where(token_mask, s, -float('inf'))
 
         m_new = tl.maximum(m, tl.max(s))
         p = tl.exp(s - m_new)
@@ -72,7 +71,7 @@ def single_query_paged_kv_attention_fused_kernel(
         alpha = tl.exp(m - m_new)
         l_new = alpha * l + tl.sum(p)
 
-        acc = acc * alpha + tl.dot(p, v).view(pad_head_dim)
+        acc = acc * alpha + tl.sum(p[:, None] * v, axis=0)
 
         m = m_new
         l = l_new
