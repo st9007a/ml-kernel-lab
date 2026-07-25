@@ -124,7 +124,7 @@ def single_query_paged_kv_attention(
         seq_lens,
         out,
         q_flatten.stride(0),
-        out.stride(1),
+        out.stride(0),
         k_cache.stride(0),
         k_cache.stride(1),
         k_cache.stride(2),
