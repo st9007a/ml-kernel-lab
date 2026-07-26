@@ -9,6 +9,7 @@
 * SwiGLU
 * Masked Softmax
 * Flash Attention V1
+* Paged K/V Attention
 
 ### Performance
 
