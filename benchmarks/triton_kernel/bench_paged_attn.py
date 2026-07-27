@@ -46,9 +46,9 @@ compiled_torch_decode_attention = torch.compile(torch_decode_attention)
         x_names=['seq_len'],
         x_vals=[128, 256, 512, 1024, 2048, 4096],
         line_arg='provider',
-        line_vals=['triton', 'torch', 'torch.compile'],
-        line_names=['Triton', 'Torch', 'Torch Compile'],
-        styles=[('blue', '-'), ('green', '-'), ('red', '-')],
+        line_vals=['triton-v1', 'triton-v2', 'torch', 'torch.compile'],
+        line_names=['Triton v1', 'Triton v2', 'Torch', 'Torch Compile'],
+        styles=[('blue', '-'), ('cyan', '-'), ('green', '-'), ('red', '-')],
         ylabel='ms',
         plot_name='paged-attn-decode-forward-latency-seq-len',
         args={
@@ -62,9 +62,9 @@ compiled_torch_decode_attention = torch.compile(torch_decode_attention)
         x_names=['batch_size'],
         x_vals=[1, 2, 4, 8, 16, 32],
         line_arg='provider',
-        line_vals=['triton', 'torch', 'torch.compile'],
-        line_names=['Triton', 'Torch', 'Torch Compile'],
-        styles=[('blue', '-'), ('green', '-'), ('red', '-')],
+        line_vals=['triton-v1', 'triton-v2', 'torch', 'torch.compile'],
+        line_names=['Triton v1', 'Triton v2', 'Torch', 'Torch Compile'],
+        styles=[('blue', '-'), ('cyan', '-'), ('green', '-'), ('red', '-')],
         ylabel='ms',
         plot_name='paged-attn-decode-forward-latency-batch-size',
         args={
@@ -78,9 +78,9 @@ compiled_torch_decode_attention = torch.compile(torch_decode_attention)
         x_names=['block_size'],
         x_vals=[8, 16, 32, 64],
         line_arg='provider',
-        line_vals=['triton', 'torch', 'torch.compile'],
-        line_names=['Triton', 'Torch', 'Torch Compile'],
-        styles=[('blue', '-'), ('green', '-'), ('red', '-')],
+        line_vals=['triton-v1', 'triton-v2', 'torch', 'torch.compile'],
+        line_names=['Triton v1', 'Triton v2', 'Torch', 'Torch Compile'],
+        styles=[('blue', '-'), ('cyan', '-'), ('green', '-'), ('red', '-')],
         ylabel='ms',
         plot_name='paged-attn-decode-forward-latency-block-size',
         args={
@@ -94,9 +94,9 @@ compiled_torch_decode_attention = torch.compile(torch_decode_attention)
         x_names=['head_dim'],
         x_vals=[64, 128],
         line_arg='provider',
-        line_vals=['triton', 'torch', 'torch.compile'],
-        line_names=['Triton', 'Torch', 'Torch Compile'],
-        styles=[('blue', '-'), ('green', '-'), ('red', '-')],
+        line_vals=['triton-v1', 'triton-v2', 'torch', 'torch.compile'],
+        line_names=['Triton v1', 'Triton v2', 'Torch', 'Torch Compile'],
+        styles=[('blue', '-'), ('cyan', '-'), ('green', '-'), ('red', '-')],
         ylabel='ms',
         plot_name='paged-attn-decode-forward-latency-head-dim',
         args={
@@ -125,8 +125,11 @@ def bench_paged_attn(
     quantiles = [0.5, 0.2, 0.8]
 
     def target_fn():
-        if provider == 'triton':
+        if provider == 'triton-v1':
             return triton_kernel.single_query_paged_kv_attention(q, k_cache, v_cache, block_table, seq_lens)
+
+        if provider == 'triton-v2':
+            return triton_kernel.single_query_paged_kv_attention_v2(q, k_cache, v_cache, block_table, seq_lens)
 
         if provider == 'torch':
             return torch_decode_attention(q, k, v, seq_lens)

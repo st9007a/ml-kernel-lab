@@ -63,14 +63,52 @@ def assert_attention_close(actual, expected, dtype):
 )
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
 @pytest.mark.parametrize('permute_blocks', [False, True])
-def test_match_torch_results(batch_size, n_heads, max_seq_len, head_dim, block_size, seq_lens_values, dtype, permute_blocks):
+@pytest.mark.parametrize('impl', ['v1', 'v2'])
+def test_match_torch_results(
+    batch_size,
+    n_heads,
+    max_seq_len,
+    head_dim,
+    block_size,
+    seq_lens_values,
+    dtype,
+    permute_blocks,
+    impl,
+):
     q = torch.randn((batch_size, n_heads, head_dim), dtype=dtype, device='cuda')
     k = torch.randn((batch_size, n_heads, max_seq_len, head_dim), dtype=dtype, device='cuda')
     v = torch.randn((batch_size, n_heads, max_seq_len, head_dim), dtype=dtype, device='cuda')
     seq_lens = torch.tensor(seq_lens_values, dtype=torch.int32, device='cuda')
     k_cache, v_cache, block_table, seq_lens = make_paged_cache(k, v, seq_lens, block_size, permute_blocks)
 
-    actual = triton_kernel.single_query_paged_kv_attention(q, k_cache, v_cache, block_table, seq_lens)
+    if impl == 'v1':
+        actual = triton_kernel.single_query_paged_kv_attention(q, k_cache, v_cache, block_table, seq_lens)
+    elif impl == 'v2':
+        actual = triton_kernel.single_query_paged_kv_attention_v2(q, k_cache, v_cache, block_table, seq_lens)
+    else:
+        raise ValueError(f'unknown impl: {impl}')
+
+    expected = torch_decode_attention(q, k, v, seq_lens)
+
+    assert_attention_close(actual, expected, dtype)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA required')
+def test_v2_match_torch_with_ragged_sequences_and_permuted_blocks():
+    batch_size = 4
+    n_heads = 8
+    max_seq_len = 257
+    head_dim = 128
+    block_size = 32
+    dtype = torch.bfloat16
+
+    q = torch.randn((batch_size, n_heads, head_dim), dtype=dtype, device='cuda')
+    k = torch.randn((batch_size, n_heads, max_seq_len, head_dim), dtype=dtype, device='cuda')
+    v = torch.randn((batch_size, n_heads, max_seq_len, head_dim), dtype=dtype, device='cuda')
+    seq_lens = torch.tensor([257, 193, 65, 1], dtype=torch.int32, device='cuda')
+    k_cache, v_cache, block_table, seq_lens = make_paged_cache(k, v, seq_lens, block_size, permute_blocks=True)
+
+    actual = triton_kernel.single_query_paged_kv_attention_v2(q, k_cache, v_cache, block_table, seq_lens)
     expected = torch_decode_attention(q, k, v, seq_lens)
 
     assert_attention_close(actual, expected, dtype)
