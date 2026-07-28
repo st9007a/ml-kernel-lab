@@ -62,12 +62,12 @@ def single_query_paged_kv_attention_fused_kernel(
     for logical_block_idx in tl.range(0, max_num_blocks):
         physical_block_idx = tl.load(block_table_ptr + batch_id * bt_stride_row + logical_block_idx)
 
-        token_idx = logical_block_idx * block_size + k_offset[None, :]
+        token_idx = logical_block_idx * block_size + k_offset
         token_mask = token_idx < seq_len
 
         # load k, v
         k_block_offset = physical_block_idx * k_stride_n + hkv * k_stride_h + k_offset[:, None] * k_stride_b + d_offset[None, :]
-        k_mask = token_mask & (d_offset[None, :] < head_dim)
+        k_mask = token_mask[:, None] & (d_offset[None, :] < head_dim)
         k = tl.load(k_cache_ptr + k_block_offset, mask=k_mask, other=0.)
 
         v_block_offset = physical_block_idx * v_stride_n + hkv * v_stride_h + k_offset[:, None] * v_stride_b + d_offset[None, :]
@@ -75,7 +75,7 @@ def single_query_paged_kv_attention_fused_kernel(
 
         # Single-query decode: compute q @ K^T as a vector reduction.
         s = tl.dot(q, tl.trans(k, (1, 0))) * sm_scale
-        s = tl.where(token_mask, s, -float('inf'))
+        s = tl.where(token_mask[None, :], s, -float('inf'))
 
         m_new = tl.maximum(m, tl.max(s, axis=1))
         p = tl.exp(s - m_new[:, None])
