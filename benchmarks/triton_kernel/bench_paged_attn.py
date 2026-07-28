@@ -38,7 +38,20 @@ def torch_decode_attention(q, k, v, seq_lens):
     return torch.einsum('bhn,bhnd->bhd', probs, v)
 
 
+def torch_paged_decode_attention(q, k_cache, v_cache, block_table, seq_lens):
+    batch_size, n_heads, head_dim = q.shape
+    _, _, block_size, _ = k_cache.shape
+    max_blocks_per_seq = block_table.shape[1]
+    max_seq_len = max_blocks_per_seq * block_size
+    physical_blocks = block_table.to(torch.long)
+
+    k = k_cache[physical_blocks].permute(0, 2, 1, 3, 4).reshape(batch_size, n_heads, max_seq_len, head_dim)
+    v = v_cache[physical_blocks].permute(0, 2, 1, 3, 4).reshape(batch_size, n_heads, max_seq_len, head_dim)
+    return torch_decode_attention(q, k, v, seq_lens)
+
+
 compiled_torch_decode_attention = torch.compile(torch_decode_attention)
+compiled_torch_paged_decode_attention = torch.compile(torch_paged_decode_attention)
 
 
 @triton.testing.perf_report([
@@ -46,9 +59,9 @@ compiled_torch_decode_attention = torch.compile(torch_decode_attention)
         x_names=['seq_len'],
         x_vals=[128, 256, 512, 1024, 2048, 4096],
         line_arg='provider',
-        line_vals=['triton-v1', 'triton-v2', 'torch', 'torch.compile'],
-        line_names=['Triton v1', 'Triton v2', 'Torch', 'Torch Compile'],
-        styles=[('blue', '-'), ('cyan', '-'), ('green', '-'), ('red', '-')],
+        line_vals=['triton-v1', 'triton-v2', 'torch-paged', 'torch-paged.compile', 'torch-dense'],
+        line_names=['Triton v1', 'Triton v2', 'Torch Paged', 'Torch Paged Compile', 'Torch Dense'],
+        styles=[('blue', '-'), ('cyan', '-'), ('green', '-'), ('red', '-'), ('gray', '-')],
         ylabel='ms',
         plot_name='paged-attn-decode-forward-latency-seq-len',
         args={
@@ -62,9 +75,9 @@ compiled_torch_decode_attention = torch.compile(torch_decode_attention)
         x_names=['batch_size'],
         x_vals=[1, 2, 4, 8, 16, 32],
         line_arg='provider',
-        line_vals=['triton-v1', 'triton-v2', 'torch', 'torch.compile'],
-        line_names=['Triton v1', 'Triton v2', 'Torch', 'Torch Compile'],
-        styles=[('blue', '-'), ('cyan', '-'), ('green', '-'), ('red', '-')],
+        line_vals=['triton-v1', 'triton-v2', 'torch-paged', 'torch-paged.compile', 'torch-dense'],
+        line_names=['Triton v1', 'Triton v2', 'Torch Paged', 'Torch Paged Compile', 'Torch Dense'],
+        styles=[('blue', '-'), ('cyan', '-'), ('green', '-'), ('red', '-'), ('gray', '-')],
         ylabel='ms',
         plot_name='paged-attn-decode-forward-latency-batch-size',
         args={
@@ -78,9 +91,9 @@ compiled_torch_decode_attention = torch.compile(torch_decode_attention)
         x_names=['block_size'],
         x_vals=[8, 16, 32, 64],
         line_arg='provider',
-        line_vals=['triton-v1', 'triton-v2', 'torch', 'torch.compile'],
-        line_names=['Triton v1', 'Triton v2', 'Torch', 'Torch Compile'],
-        styles=[('blue', '-'), ('cyan', '-'), ('green', '-'), ('red', '-')],
+        line_vals=['triton-v1', 'triton-v2', 'torch-paged', 'torch-paged.compile', 'torch-dense'],
+        line_names=['Triton v1', 'Triton v2', 'Torch Paged', 'Torch Paged Compile', 'Torch Dense'],
+        styles=[('blue', '-'), ('cyan', '-'), ('green', '-'), ('red', '-'), ('gray', '-')],
         ylabel='ms',
         plot_name='paged-attn-decode-forward-latency-block-size',
         args={
@@ -94,9 +107,9 @@ compiled_torch_decode_attention = torch.compile(torch_decode_attention)
         x_names=['head_dim'],
         x_vals=[64, 128],
         line_arg='provider',
-        line_vals=['triton-v1', 'triton-v2', 'torch', 'torch.compile'],
-        line_names=['Triton v1', 'Triton v2', 'Torch', 'Torch Compile'],
-        styles=[('blue', '-'), ('cyan', '-'), ('green', '-'), ('red', '-')],
+        line_vals=['triton-v1', 'triton-v2', 'torch-paged', 'torch-paged.compile', 'torch-dense'],
+        line_names=['Triton v1', 'Triton v2', 'Torch Paged', 'Torch Paged Compile', 'Torch Dense'],
+        styles=[('blue', '-'), ('cyan', '-'), ('green', '-'), ('red', '-'), ('gray', '-')],
         ylabel='ms',
         plot_name='paged-attn-decode-forward-latency-head-dim',
         args={
@@ -131,10 +144,16 @@ def bench_paged_attn(
         if provider == 'triton-v2':
             return triton_kernel.single_query_paged_kv_attention_v2(q, k_cache, v_cache, block_table, seq_lens)
 
-        if provider == 'torch':
+        if provider == 'torch-paged':
+            return torch_paged_decode_attention(q, k_cache, v_cache, block_table, seq_lens)
+
+        if provider == 'torch-paged.compile':
+            return compiled_torch_paged_decode_attention(q, k_cache, v_cache, block_table, seq_lens)
+
+        if provider == 'torch-dense':
             return torch_decode_attention(q, k, v, seq_lens)
 
-        if provider == 'torch.compile':
+        if provider == 'torch-dense.compile':
             return compiled_torch_decode_attention(q, k, v, seq_lens)
 
         raise ValueError(f'unknown provider: {provider}')
