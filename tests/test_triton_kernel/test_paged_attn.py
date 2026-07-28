@@ -80,11 +80,12 @@ def test_match_torch_results(
     v = torch.randn((batch_size, n_heads, max_seq_len, head_dim), dtype=dtype, device='cuda')
     seq_lens = torch.tensor(seq_lens_values, dtype=torch.int32, device='cuda')
     k_cache, v_cache, block_table, seq_lens = make_paged_cache(k, v, seq_lens, block_size, permute_blocks)
+    max_num_blocks = (max(seq_lens_values) + block_size - 1) // block_size
 
     if impl == 'v1':
-        actual = triton_kernel.single_query_paged_kv_attention(q, k_cache, v_cache, block_table, seq_lens)
+        actual = triton_kernel.single_query_paged_kv_attention(q, k_cache, v_cache, block_table, seq_lens, max_num_blocks)
     elif impl == 'v2':
-        actual = triton_kernel.single_query_paged_kv_attention_v2(q, k_cache, v_cache, block_table, seq_lens)
+        actual = triton_kernel.single_query_paged_kv_attention_v2(q, k_cache, v_cache, block_table, seq_lens, max_num_blocks)
     else:
         raise ValueError(f'unknown impl: {impl}')
 
@@ -105,10 +106,12 @@ def test_v2_match_torch_with_ragged_sequences_and_permuted_blocks():
     q = torch.randn((batch_size, n_heads, head_dim), dtype=dtype, device='cuda')
     k = torch.randn((batch_size, n_heads, max_seq_len, head_dim), dtype=dtype, device='cuda')
     v = torch.randn((batch_size, n_heads, max_seq_len, head_dim), dtype=dtype, device='cuda')
-    seq_lens = torch.tensor([257, 193, 65, 1], dtype=torch.int32, device='cuda')
+    seq_lens_values = [257, 193, 65, 1]
+    seq_lens = torch.tensor(seq_lens_values, dtype=torch.int32, device='cuda')
     k_cache, v_cache, block_table, seq_lens = make_paged_cache(k, v, seq_lens, block_size, permute_blocks=True)
+    max_num_blocks = (max(seq_lens_values) + block_size - 1) // block_size
 
-    actual = triton_kernel.single_query_paged_kv_attention_v2(q, k_cache, v_cache, block_table, seq_lens)
+    actual = triton_kernel.single_query_paged_kv_attention_v2(q, k_cache, v_cache, block_table, seq_lens, max_num_blocks)
     expected = torch_decode_attention(q, k, v, seq_lens)
 
     assert_attention_close(actual, expected, dtype)

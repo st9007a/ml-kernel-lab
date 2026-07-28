@@ -135,14 +135,15 @@ def bench_paged_attn(
     v = torch.randn((batch_size, n_heads, seq_len, head_dim), dtype=dtype, device=device)
     seq_lens = torch.full((batch_size,), seq_len, dtype=torch.int32, device=device)
     k_cache, v_cache, block_table = make_paged_cache(k, v, block_size, permute_blocks=True)
+    max_num_blocks = triton.cdiv(seq_len, block_size)
     quantiles = [0.5, 0.2, 0.8]
 
     def target_fn():
         if provider == 'triton-v1':
-            return triton_kernel.single_query_paged_kv_attention(q, k_cache, v_cache, block_table, seq_lens)
+            return triton_kernel.single_query_paged_kv_attention(q, k_cache, v_cache, block_table, seq_lens, max_num_blocks)
 
         if provider == 'triton-v2':
-            return triton_kernel.single_query_paged_kv_attention_v2(q, k_cache, v_cache, block_table, seq_lens)
+            return triton_kernel.single_query_paged_kv_attention_v2(q, k_cache, v_cache, block_table, seq_lens, max_num_blocks)
 
         if provider == 'torch-paged':
             return torch_paged_decode_attention(q, k_cache, v_cache, block_table, seq_lens)

@@ -24,6 +24,7 @@ def single_query_paged_kv_attention_fused_kernel(
     bt_stride_row: tl.constexpr,
     sm_scale: tl.constexpr,
     num_heads: tl.constexpr,
+    max_num_blocks: tl.constexpr,
     block_size: tl.constexpr,
     head_dim: tl.constexpr,
     pad_block_size: tl.constexpr,
@@ -34,8 +35,6 @@ def single_query_paged_kv_attention_fused_kernel(
     hq = pid % num_heads
 
     seq_len = tl.load(seq_lens_ptr + batch_id)
-    num_blocks = tl.cdiv(seq_len, block_size)
-
     d_offset = tl.arange(0, pad_head_dim)
     k_offset = tl.arange(0, pad_block_size)
     q = tl.load(q_ptr + pid * q_stride_row + d_offset, mask=d_offset < head_dim, other=0.)
@@ -47,7 +46,7 @@ def single_query_paged_kv_attention_fused_kernel(
     # accumulated output
     acc = tl.zeros((pad_head_dim, ), dtype=tl.float32)
 
-    for logical_block_idx in tl.range(0, num_blocks):
+    for logical_block_idx in tl.range(0, max_num_blocks):
         physical_block_idx = tl.load(block_table_ptr + batch_id * bt_stride_row + logical_block_idx)
 
         token_idx = logical_block_idx * block_size + k_offset
@@ -219,6 +218,7 @@ def single_query_paged_kv_attention(
     v_cache: torch.Tensor,
     block_table: torch.Tensor,
     seq_lens: torch.Tensor,
+    max_num_blocks: int | None = None,
 ) -> torch.Tensor:
     """
     q = [B, Hq, D]
@@ -235,7 +235,7 @@ def single_query_paged_kv_attention(
     B, Hq, D = q.shape
     _, Hk, k_block_size, Dk = k_cache.shape
     _, Hv, v_block_size, Dv = v_cache.shape
-    Bbt, _ = block_table.shape
+    Bbt, max_blocks_per_seq = block_table.shape
     Bs = seq_lens.shape[0]
 
     assert k_block_size == v_block_size
@@ -243,7 +243,10 @@ def single_query_paged_kv_attention(
     assert Hk == Hv == Hq
     assert D == Dk == Dv
 
-    assert torch.all(seq_lens > 0).item()
+    if max_num_blocks is None:
+        max_num_blocks = max_blocks_per_seq
+
+    assert 0 < max_num_blocks <= max_blocks_per_seq
 
     q_flatten = q.reshape(-1, D)
     out = torch.empty_like(q_flatten)
@@ -267,6 +270,7 @@ def single_query_paged_kv_attention(
         block_table.stride(0),
         1 / math.sqrt(D),
         Hq,
+        max_num_blocks,
         k_block_size,
         D,
         triton.next_power_of_2(k_block_size),
@@ -283,6 +287,7 @@ def single_query_paged_kv_attention_v2(
     v_cache: torch.Tensor,
     block_table: torch.Tensor,
     seq_lens: torch.Tensor,
+    max_num_blocks: int | None = None,
 ) -> torch.Tensor:
     assert q.dim() == 3
     assert k_cache.dim() == v_cache.dim() == 4
@@ -292,7 +297,7 @@ def single_query_paged_kv_attention_v2(
     B, Hq, D = q.shape
     _, Hk, k_block_size, Dk = k_cache.shape
     _, Hv, v_block_size, Dv = v_cache.shape
-    Bbt, _ = block_table.shape
+    Bbt, max_blocks_per_seq = block_table.shape
     Bs = seq_lens.shape[0]
 
     assert k_block_size == v_block_size
@@ -300,12 +305,13 @@ def single_query_paged_kv_attention_v2(
     assert Hk == Hv == Hq
     assert D == Dk == Dv
 
-    assert torch.all(seq_lens > 0).item()
+    if max_num_blocks is None:
+        max_num_blocks = max_blocks_per_seq
 
-    num_blocks_per_split = 4
-    max_seq_len = int(seq_lens.max().item())
-    num_blocks = triton.cdiv(max_seq_len, k_block_size)
-    num_splits = triton.cdiv(num_blocks, num_blocks_per_split)
+    assert 0 < max_num_blocks <= max_blocks_per_seq
+
+    num_blocks_per_split = 32
+    num_splits = triton.cdiv(max_num_blocks, num_blocks_per_split)
 
     q_flatten = q.reshape(-1, D)
     acc = torch.empty((B * Hq, num_splits, D), dtype=torch.float32, device=q.device)
