@@ -6,7 +6,7 @@ import triton.language as tl
 
 
 @triton.heuristics(values={
-    'BLOCK_SIZE_M': lambda args: triton.next_power_of_2(args['group_size']),
+    'BLOCK_SIZE_M': lambda args: max(16, triton.next_power_of_2(args['group_size'])),
     'BLOCK_SIZE_K': lambda args: triton.next_power_of_2(args['head_dim']),
     'BLOCK_SIZE_N': lambda args: triton.next_power_of_2(args['block_size']),
 })

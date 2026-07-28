@@ -30,23 +30,19 @@ def make_paged_cache(k, v, block_size, permute_blocks=False):
     return k_cache, v_cache, block_table
 
 
-def torch_gqa_decode_attention(q, k, v, seq_lens):
-    outputs = []
-    for b in range(q.shape[0]):
-        seq_len = int(seq_lens[b].item())
-        out = F.scaled_dot_product_attention(
-            q[b : b + 1, :, None, :],
-            k[b : b + 1, :, :seq_len, :],
-            v[b : b + 1, :, :seq_len, :],
-            dropout_p=0.0,
-            is_causal=False,
-            enable_gqa=True,
-        )
-        outputs.append(out[:, :, 0, :])
-    return torch.cat(outputs, dim=0)
+def torch_gqa_decode_attention(q, k, v):
+    out = F.scaled_dot_product_attention(
+        q[:, :, None, :],
+        k,
+        v,
+        dropout_p=0.0,
+        is_causal=False,
+        enable_gqa=True,
+    )
+    return out[:, :, 0, :]
 
 
-def torch_paged_gqa_decode_attention(q, k_cache, v_cache, block_table, seq_lens):
+def torch_paged_gqa_decode_attention(q, k_cache, v_cache, block_table):
     batch_size, n_query_heads, head_dim = q.shape
     _, n_kv_heads, block_size, _ = k_cache.shape
     max_blocks_per_seq = block_table.shape[1]
@@ -56,7 +52,7 @@ def torch_paged_gqa_decode_attention(q, k_cache, v_cache, block_table, seq_lens)
     k = k_cache[physical_blocks].permute(0, 2, 1, 3, 4).reshape(batch_size, n_kv_heads, max_seq_len, head_dim)
     v = v_cache[physical_blocks].permute(0, 2, 1, 3, 4).reshape(batch_size, n_kv_heads, max_seq_len, head_dim)
     assert n_query_heads % n_kv_heads == 0
-    return torch_gqa_decode_attention(q, k, v, seq_lens)
+    return torch_gqa_decode_attention(q, k, v)
 
 
 compiled_torch_gqa_decode_attention = torch.compile(torch_gqa_decode_attention)
@@ -157,16 +153,16 @@ def bench_paged_attn_gqa(
             return triton_kernel.single_query_paged_kv_attention(q, k_cache, v_cache, block_table, seq_lens, max_num_blocks)
 
         if provider == 'torch-paged':
-            return torch_paged_gqa_decode_attention(q, k_cache, v_cache, block_table, seq_lens)
+            return torch_paged_gqa_decode_attention(q, k_cache, v_cache, block_table)
 
         if provider == 'torch-paged.compile':
-            return compiled_torch_paged_gqa_decode_attention(q, k_cache, v_cache, block_table, seq_lens)
+            return compiled_torch_paged_gqa_decode_attention(q, k_cache, v_cache, block_table)
 
         if provider == 'torch-dense':
-            return torch_gqa_decode_attention(q, k, v, seq_lens)
+            return torch_gqa_decode_attention(q, k, v)
 
         if provider == 'torch-dense.compile':
-            return compiled_torch_gqa_decode_attention(q, k, v, seq_lens)
+            return compiled_torch_gqa_decode_attention(q, k, v)
 
         raise ValueError(f'unknown provider: {provider}')
 
