@@ -179,5 +179,96 @@ def bench_paged_attn(
     return ms, max_ms, min_ms
 
 
+@triton.testing.perf_report([
+    triton.testing.Benchmark(
+        x_names=['batch_size'],
+        x_vals=[1, 2, 4, 8, 16],
+        line_arg='num_blocks_per_split',
+        line_vals=[1, 2, 4, 8, 16, 32, 64],
+        line_names=['1', '2', '4', '8', '16', '32', '64'],
+        styles=[
+            ('blue', '-'),
+            ('cyan', '-'),
+            ('green', '-'),
+            ('red', '-'),
+            ('purple', '-'),
+            ('orange', '-'),
+            ('gray', '-'),
+        ],
+        ylabel='ms',
+        plot_name='paged-attn-v2-forward-latency-split-size-batch-size',
+        args={
+            'seq_len': 1024,
+            'n_heads': 8,
+            'head_dim': 128,
+            'block_size': 16,
+        },
+    ),
+    triton.testing.Benchmark(
+        x_names=['seq_len'],
+        x_vals=[128, 256, 512, 1024, 2048, 4096],
+        line_arg='num_blocks_per_split',
+        line_vals=[1, 2, 4, 8, 16, 32, 64],
+        line_names=['1', '2', '4', '8', '16', '32', '64'],
+        styles=[
+            ('blue', '-'),
+            ('cyan', '-'),
+            ('green', '-'),
+            ('red', '-'),
+            ('purple', '-'),
+            ('orange', '-'),
+            ('gray', '-'),
+        ],
+        ylabel='ms',
+        plot_name='paged-attn-v2-forward-latency-split-size-seq-len',
+        args={
+            'batch_size': 1,
+            'n_heads': 8,
+            'head_dim': 128,
+            'block_size': 16,
+        },
+    ),
+])
+def bench_paged_attn_v2_split_size(
+    batch_size,
+    n_heads,
+    seq_len,
+    head_dim,
+    block_size,
+    num_blocks_per_split,
+    device=torch.device('cuda'),
+):
+    dtype = torch.bfloat16
+    q = torch.randn((batch_size, n_heads, head_dim), dtype=dtype, device=device)
+    k = torch.randn((batch_size, n_heads, seq_len, head_dim), dtype=dtype, device=device)
+    v = torch.randn((batch_size, n_heads, seq_len, head_dim), dtype=dtype, device=device)
+    seq_lens = torch.full((batch_size,), seq_len, dtype=torch.int32, device=device)
+    k_cache, v_cache, block_table = make_paged_cache(k, v, block_size, permute_blocks=True)
+    max_num_blocks = triton.cdiv(seq_len, block_size)
+    num_splits = triton.cdiv(max_num_blocks, num_blocks_per_split)
+    acc = torch.empty((batch_size * n_heads, num_splits, head_dim), dtype=torch.float32, device=device)
+    local_max = torch.empty((batch_size * n_heads, num_splits), dtype=torch.float32, device=device)
+    local_expsum = torch.empty_like(local_max)
+    quantiles = [0.5, 0.2, 0.8]
+
+    def target_fn():
+        return triton_kernel.single_query_paged_kv_attention_v2(
+            q,
+            k_cache,
+            v_cache,
+            block_table,
+            seq_lens,
+            max_num_blocks,
+            num_blocks_per_split,
+            acc,
+            local_max,
+            local_expsum,
+        )
+
+    ms, min_ms, max_ms = triton.testing.do_bench(target_fn, quantiles=quantiles, rep=500)
+    return ms, max_ms, min_ms
+
+
 if __name__ == '__main__':
     bench_paged_attn.run(print_data=True, return_df=True)
+    bench_paged_attn_v2_split_size.run(print_data=True, return_df=True)
