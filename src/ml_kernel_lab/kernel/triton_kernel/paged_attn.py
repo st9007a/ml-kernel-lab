@@ -5,6 +5,11 @@ import triton
 import triton.language as tl
 
 
+@triton.heuristics(values={
+    'BLOCK_SIZE_M': lambda args: triton.next_power_of_2(args['group_size']),
+    'BLOCK_SIZE_K': lambda args: triton.next_power_of_2(args['head_dim']),
+    'BLOCK_SIZE_N': lambda args: triton.next_power_of_2(args['block_size']),
+})
 @triton.jit
 def single_query_paged_kv_attention_fused_kernel(
     q_ptr,
@@ -13,8 +18,10 @@ def single_query_paged_kv_attention_fused_kernel(
     block_table_ptr,
     seq_lens_ptr,
     out_ptr,
-    q_stride_row: tl.constexpr,
-    o_stride_row: tl.constexpr,
+    q_stride_b: tl.constexpr,
+    q_stride_h: tl.constexpr,
+    o_stride_b: tl.constexpr,
+    o_stride_h: tl.constexpr,
     k_stride_n: tl.constexpr,
     k_stride_h: tl.constexpr,
     k_stride_b: tl.constexpr,
@@ -23,60 +30,67 @@ def single_query_paged_kv_attention_fused_kernel(
     v_stride_b: tl.constexpr,
     bt_stride_row: tl.constexpr,
     sm_scale: tl.constexpr,
-    num_heads: tl.constexpr,
+    num_kv_heads: tl.constexpr,
+    group_size: tl.constexpr,
     max_num_blocks: tl.constexpr,
     block_size: tl.constexpr,
     head_dim: tl.constexpr,
-    pad_block_size: tl.constexpr,
-    pad_head_dim: tl.constexpr,
+    BLOCK_SIZE_M: tl.constexpr,
+    BLOCK_SIZE_K: tl.constexpr,
+    BLOCK_SIZE_N: tl.constexpr,
 ):
     pid = tl.program_id(0)
-    batch_id = pid // num_heads
-    hq = pid % num_heads
+    batch_id = pid // num_kv_heads
+    hkv = pid % num_kv_heads
 
     seq_len = tl.load(seq_lens_ptr + batch_id)
-    d_offset = tl.arange(0, pad_head_dim)
-    k_offset = tl.arange(0, pad_block_size)
-    q = tl.load(q_ptr + pid * q_stride_row + d_offset, mask=d_offset < head_dim, other=0.)
+    g_offset = tl.arange(0, BLOCK_SIZE_M)
+    d_offset = tl.arange(0, BLOCK_SIZE_K)
+    k_offset = tl.arange(0, BLOCK_SIZE_N)
+
+    q_offset = batch_id * q_stride_b + (hkv * group_size + g_offset[:, None]) * q_stride_h + d_offset[None, :]
+    q_mask = (g_offset[:, None] < group_size) & (d_offset[None, :] < head_dim)
+    q = tl.load(q_ptr + q_offset, mask=q_mask, other=0.)
 
     # exp sum
-    l = 0.
+    l = tl.zeros((BLOCK_SIZE_M, ), dtype=tl.float32)
     # max
-    m = -float('inf')
+    m = tl.full((BLOCK_SIZE_M,), value=-float('inf'), dtype=tl.float32)
     # accumulated output
-    acc = tl.zeros((pad_head_dim, ), dtype=tl.float32)
+    acc = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_K), dtype=tl.float32)
 
     for logical_block_idx in tl.range(0, max_num_blocks):
         physical_block_idx = tl.load(block_table_ptr + batch_id * bt_stride_row + logical_block_idx)
 
-        token_idx = logical_block_idx * block_size + k_offset
+        token_idx = logical_block_idx * block_size + k_offset[None, :]
         token_mask = token_idx < seq_len
 
         # load k, v
-        k_block_offset = physical_block_idx * k_stride_n + hq * k_stride_h + k_offset[:, None] * k_stride_b + d_offset[None, :]
+        k_block_offset = physical_block_idx * k_stride_n + hkv * k_stride_h + k_offset[:, None] * k_stride_b + d_offset[None, :]
         k_mask = token_mask[:, None] & (d_offset[None, :] < head_dim)
         k = tl.load(k_cache_ptr + k_block_offset, mask=k_mask, other=0.)
 
-        v_block_offset = physical_block_idx * v_stride_n + hq * v_stride_h + k_offset[:, None] * v_stride_b + d_offset[None, :]
+        v_block_offset = physical_block_idx * v_stride_n + hkv * v_stride_h + k_offset[:, None] * v_stride_b + d_offset[None, :]
         v = tl.load(v_cache_ptr + v_block_offset, mask=k_mask, other=0.)
 
         # Single-query decode: compute q @ K^T as a vector reduction.
-        s = tl.sum(k * q[None, :], axis=1) * sm_scale
+        s = tl.dot(q, tl.trans(k, (1, 0))) * sm_scale
         s = tl.where(token_mask, s, -float('inf'))
 
-        m_new = tl.maximum(m, tl.max(s))
-        p = tl.exp(s - m_new)
+        m_new = tl.maximum(m, tl.max(s, axis=1))
+        p = tl.exp(s - m_new[:, None])
         p = p.to(v.dtype)
         alpha = tl.exp(m - m_new)
-        l_new = alpha * l + tl.sum(p)
+        l_new = alpha * l + tl.sum(p, axis=1)
 
-        acc = acc * alpha + tl.sum(p[:, None] * v, axis=0)
+        acc = acc * alpha[:, None] + tl.dot(p, v)
 
         m = m_new
         l = l_new
 
-    out = acc / l
-    tl.store(out_ptr + pid * o_stride_row + d_offset, out, mask=d_offset < head_dim)
+    out = acc / l[:, None]
+    o_offset = batch_id * o_stride_b + (hkv * group_size + g_offset[:, None]) * o_stride_h + d_offset[None, :]
+    tl.store(out_ptr + o_offset, out, mask=q_mask)
 
 
 @triton.heuristics(values={
@@ -238,9 +252,10 @@ def single_query_paged_kv_attention(
     Bbt, max_blocks_per_seq = block_table.shape
     Bs = seq_lens.shape[0]
 
+    assert Hq % Hk == 0
     assert k_block_size == v_block_size
     assert B == Bbt == Bs
-    assert Hk == Hv == Hq
+    assert Hk == Hv
     assert D == Dk == Dv
 
     if max_num_blocks is None:
@@ -248,19 +263,20 @@ def single_query_paged_kv_attention(
 
     assert 0 < max_num_blocks <= max_blocks_per_seq
 
-    q_flatten = q.reshape(-1, D)
-    out = torch.empty_like(q_flatten)
+    out = torch.empty_like(q)
     num_warps = 4
-    grid = (B * Hq, )
+    grid = (B * Hk, )
     single_query_paged_kv_attention_fused_kernel[grid](
-        q_flatten,
+        q,
         k_cache,
         v_cache,
         block_table,
         seq_lens,
         out,
-        q_flatten.stride(0),
+        q.stride(0),
+        q.stride(1),
         out.stride(0),
+        out.stride(1),
         k_cache.stride(0),
         k_cache.stride(1),
         k_cache.stride(2),
@@ -269,16 +285,15 @@ def single_query_paged_kv_attention(
         v_cache.stride(2),
         block_table.stride(0),
         1 / math.sqrt(D),
-        Hq,
+        Hk,
+        Hq // Hk,
         max_num_blocks,
         k_block_size,
         D,
-        triton.next_power_of_2(k_block_size),
-        triton.next_power_of_2(D),
         num_warps=num_warps,
     )
 
-    return out.reshape(q.shape)
+    return out
 
 
 def single_query_paged_kv_attention_v2(
