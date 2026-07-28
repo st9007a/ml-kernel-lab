@@ -155,6 +155,7 @@ def bench_paged_attn(
                 block_table,
                 seq_lens,
                 max_num_blocks,
+                num_blocks_per_split,
                 v2_acc,
                 v2_local_max,
                 v2_local_expsum,

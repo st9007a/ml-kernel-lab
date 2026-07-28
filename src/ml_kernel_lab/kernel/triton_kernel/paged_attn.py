@@ -288,6 +288,7 @@ def single_query_paged_kv_attention_v2(
     block_table: torch.Tensor,
     seq_lens: torch.Tensor,
     max_num_blocks: int | None = None,
+    num_blocks_per_split: int = 32,
     acc: torch.Tensor | None = None,
     local_max: torch.Tensor | None = None,
     local_expsum: torch.Tensor | None = None,
@@ -312,8 +313,8 @@ def single_query_paged_kv_attention_v2(
         max_num_blocks = max_blocks_per_seq
 
     assert 0 < max_num_blocks <= max_blocks_per_seq
+    assert num_blocks_per_split > 0
 
-    num_blocks_per_split = 32
     num_splits = triton.cdiv(max_num_blocks, num_blocks_per_split)
 
     q_flatten = q.reshape(-1, D)

@@ -147,6 +147,7 @@ def test_v2_match_torch_with_preallocated_workspace():
         block_table,
         seq_lens,
         max_num_blocks,
+        num_blocks_per_split,
         acc,
         local_max,
         local_expsum,
