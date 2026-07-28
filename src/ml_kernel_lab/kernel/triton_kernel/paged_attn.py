@@ -8,7 +8,7 @@ import triton.language as tl
 @triton.heuristics(values={
     'BLOCK_SIZE_M': lambda args: max(16, triton.next_power_of_2(args['group_size'])),
     'BLOCK_SIZE_K': lambda args: triton.next_power_of_2(args['head_dim']),
-    'BLOCK_SIZE_N': lambda args: triton.next_power_of_2(args['block_size']),
+    'BLOCK_SIZE_N': lambda args: max(16, triton.next_power_of_2(args['block_size'])),
 })
 @triton.jit
 def single_query_paged_kv_attention_fused_kernel(
@@ -63,7 +63,7 @@ def single_query_paged_kv_attention_fused_kernel(
         physical_block_idx = tl.load(block_table_ptr + batch_id * bt_stride_row + logical_block_idx)
 
         token_idx = logical_block_idx * block_size + k_offset
-        token_mask = token_idx < seq_len
+        token_mask = (k_offset < block_size) & (token_idx < seq_len)
 
         # load k, v
         k_block_offset = physical_block_idx * k_stride_n + hkv * k_stride_h + k_offset[:, None] * k_stride_b + d_offset[None, :]
