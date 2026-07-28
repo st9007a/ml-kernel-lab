@@ -115,3 +115,42 @@ def test_v2_match_torch_with_ragged_sequences_and_permuted_blocks():
     expected = torch_decode_attention(q, k, v, seq_lens)
 
     assert_attention_close(actual, expected, dtype)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA required')
+def test_v2_match_torch_with_preallocated_workspace():
+    batch_size = 2
+    n_heads = 8
+    max_seq_len = 513
+    head_dim = 128
+    block_size = 16
+    num_blocks_per_split = 32
+    dtype = torch.bfloat16
+
+    q = torch.randn((batch_size, n_heads, head_dim), dtype=dtype, device='cuda')
+    k = torch.randn((batch_size, n_heads, max_seq_len, head_dim), dtype=dtype, device='cuda')
+    v = torch.randn((batch_size, n_heads, max_seq_len, head_dim), dtype=dtype, device='cuda')
+    seq_lens_values = [513, 257]
+    seq_lens = torch.tensor(seq_lens_values, dtype=torch.int32, device='cuda')
+    k_cache, v_cache, block_table, seq_lens = make_paged_cache(k, v, seq_lens, block_size, permute_blocks=True)
+    max_num_blocks = (max(seq_lens_values) + block_size - 1) // block_size
+    num_splits = (max_num_blocks + num_blocks_per_split - 1) // num_blocks_per_split
+
+    acc = torch.empty((batch_size * n_heads, num_splits, head_dim), dtype=torch.float32, device='cuda')
+    local_max = torch.empty((batch_size * n_heads, num_splits), dtype=torch.float32, device='cuda')
+    local_expsum = torch.empty_like(local_max)
+
+    actual = triton_kernel.single_query_paged_kv_attention_v2(
+        q,
+        k_cache,
+        v_cache,
+        block_table,
+        seq_lens,
+        max_num_blocks,
+        acc,
+        local_max,
+        local_expsum,
+    )
+    expected = torch_decode_attention(q, k, v, seq_lens)
+
+    assert_attention_close(actual, expected, dtype)

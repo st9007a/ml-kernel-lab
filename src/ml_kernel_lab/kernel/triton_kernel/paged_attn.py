@@ -288,6 +288,9 @@ def single_query_paged_kv_attention_v2(
     block_table: torch.Tensor,
     seq_lens: torch.Tensor,
     max_num_blocks: int | None = None,
+    acc: torch.Tensor | None = None,
+    local_max: torch.Tensor | None = None,
+    local_expsum: torch.Tensor | None = None,
 ) -> torch.Tensor:
     assert q.dim() == 3
     assert k_cache.dim() == v_cache.dim() == 4
@@ -314,9 +317,21 @@ def single_query_paged_kv_attention_v2(
     num_splits = triton.cdiv(max_num_blocks, num_blocks_per_split)
 
     q_flatten = q.reshape(-1, D)
-    acc = torch.empty((B * Hq, num_splits, D), dtype=torch.float32, device=q.device)
-    local_max = torch.empty((B * Hq, num_splits), dtype=torch.float32, device=q.device)
-    local_expsum = torch.empty((B * Hq, num_splits), dtype=torch.float32, device=q.device)
+    acc_shape = (B * Hq, num_splits, D)
+    local_shape = (B * Hq, num_splits)
+    if acc is None:
+        acc = torch.empty(acc_shape, dtype=torch.float32, device=q.device)
+    if local_max is None:
+        local_max = torch.empty(local_shape, dtype=torch.float32, device=q.device)
+    if local_expsum is None:
+        local_expsum = torch.empty(local_shape, dtype=torch.float32, device=q.device)
+
+    assert acc.shape == acc_shape
+    assert local_max.shape == local_shape
+    assert local_expsum.shape == local_shape
+    assert acc.dtype == local_max.dtype == local_expsum.dtype == torch.float32
+    assert acc.device == local_max.device == local_expsum.device == q.device
+
     out = torch.empty_like(q_flatten)
     num_warps = 4
     single_query_paged_kv_attention_split_kv_fused_kernel[(B * Hq, num_splits)](

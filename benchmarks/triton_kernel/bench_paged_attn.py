@@ -136,6 +136,11 @@ def bench_paged_attn(
     seq_lens = torch.full((batch_size,), seq_len, dtype=torch.int32, device=device)
     k_cache, v_cache, block_table = make_paged_cache(k, v, block_size, permute_blocks=True)
     max_num_blocks = triton.cdiv(seq_len, block_size)
+    num_blocks_per_split = 32
+    num_splits = triton.cdiv(max_num_blocks, num_blocks_per_split)
+    v2_acc = torch.empty((batch_size * n_heads, num_splits, head_dim), dtype=torch.float32, device=device)
+    v2_local_max = torch.empty((batch_size * n_heads, num_splits), dtype=torch.float32, device=device)
+    v2_local_expsum = torch.empty_like(v2_local_max)
     quantiles = [0.5, 0.2, 0.8]
 
     def target_fn():
@@ -143,7 +148,17 @@ def bench_paged_attn(
             return triton_kernel.single_query_paged_kv_attention(q, k_cache, v_cache, block_table, seq_lens, max_num_blocks)
 
         if provider == 'triton-v2':
-            return triton_kernel.single_query_paged_kv_attention_v2(q, k_cache, v_cache, block_table, seq_lens, max_num_blocks)
+            return triton_kernel.single_query_paged_kv_attention_v2(
+                q,
+                k_cache,
+                v_cache,
+                block_table,
+                seq_lens,
+                max_num_blocks,
+                v2_acc,
+                v2_local_max,
+                v2_local_expsum,
+            )
 
         if provider == 'torch-paged':
             return torch_paged_decode_attention(q, k_cache, v_cache, block_table, seq_lens)
