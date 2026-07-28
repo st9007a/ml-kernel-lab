@@ -67,7 +67,7 @@ def single_query_paged_kv_attention_fused_kernel(
 
         # load k, v
         k_block_offset = physical_block_idx * k_stride_n + hkv * k_stride_h + k_offset[:, None] * k_stride_b + d_offset[None, :]
-        k_mask = token_mask[:, None] & (d_offset[None, :] < head_dim)
+        k_mask = token_mask & (d_offset[None, :] < head_dim)
         k = tl.load(k_cache_ptr + k_block_offset, mask=k_mask, other=0.)
 
         v_block_offset = physical_block_idx * v_stride_n + hkv * v_stride_h + k_offset[:, None] * v_stride_b + d_offset[None, :]
