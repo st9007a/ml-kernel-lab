@@ -19,13 +19,12 @@ def make_paged_cache(k, v, block_size, permute_blocks=False):
     k_cache = torch.empty((total_blocks, n_kv_heads, block_size, head_dim), dtype=k.dtype, device=k.device)
     v_cache = torch.empty_like(k_cache)
 
-    for b in range(batch_size):
-        for logical_block_idx in range(max_blocks_per_seq):
-            start = logical_block_idx * block_size
-            end = min(start + block_size, max_seq_len)
-            physical_block_idx = int(block_table[b, logical_block_idx].item())
-            k_cache[physical_block_idx, :, : end - start, :] = k[b, :, start:end, :]
-            v_cache[physical_block_idx, :, : end - start, :] = v[b, :, start:end, :]
+    logical_k_blocks = k.reshape(batch_size, n_kv_heads, max_blocks_per_seq, block_size, head_dim)
+    logical_v_blocks = v.reshape(batch_size, n_kv_heads, max_blocks_per_seq, block_size, head_dim)
+    logical_k_blocks = logical_k_blocks.permute(0, 2, 1, 3, 4).reshape(total_blocks, n_kv_heads, block_size, head_dim)
+    logical_v_blocks = logical_v_blocks.permute(0, 2, 1, 3, 4).reshape(total_blocks, n_kv_heads, block_size, head_dim)
+    k_cache[physical_blocks.to(torch.long)] = logical_k_blocks
+    v_cache[physical_blocks.to(torch.long)] = logical_v_blocks
 
     return k_cache, v_cache, block_table
 
