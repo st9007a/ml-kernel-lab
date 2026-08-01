@@ -10,6 +10,8 @@
 * Masked Softmax
 * Flash Attention V1
 * Paged K/V Attention
+* Mixture of Experts
+  * Grouped GEMM of expert networks
 
 ### Performance
 

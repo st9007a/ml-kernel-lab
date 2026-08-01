@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 import triton
 import triton.language as tl
 
@@ -116,7 +117,3 @@ def moe_grouped_expert_gemm_fwd_v1(
         BLOCK_K,
     )
     return out
-
-
-def moe(x: torch.Tensor, w_router: torch.Tensor, w_exports: list[torch.Tensor]) -> torch.Tensor:
-    ...
