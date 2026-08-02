@@ -18,10 +18,6 @@ def torch_dense_moe(x, w_router, w_expert_0, w_expert_1, top_k):
     return torch.sum(selected_outputs * topk_weights[..., None], dim=2)
 
 
-compiled_moe = torch.compile(functional.moe)
-compiled_torch_dense_moe = torch.compile(torch_dense_moe)
-
-
 PROVIDERS = ['functional', 'functional.compile', 'torch-dense', 'torch-dense.compile']
 PROVIDER_NAMES = ['Functional MoE', 'Functional MoE Compile', 'Torch Dense', 'Torch Dense Compile']
 PROVIDER_STYLES = [('blue', '-'), ('red', '-'), ('gray', '-'), ('orange', '-')]
@@ -108,20 +104,25 @@ def bench_moe(
     w_expert_1 = torch.randn((n_experts, d_ff, d_model), dtype=dtype, device=device) / d_ff**0.5
     quantiles = [0.5, 0.2, 0.8]
 
-    def target_fn():
-        if provider == 'functional':
-            return functional.moe(x, w_router, w_expert_0, w_expert_1, top_k)
-
-        if provider == 'functional.compile':
-            return compiled_moe(x, w_router, w_expert_0, w_expert_1, top_k)
-
-        if provider == 'torch-dense':
-            return torch_dense_moe(x, w_router, w_expert_0, w_expert_1, top_k)
-
-        if provider == 'torch-dense.compile':
-            return compiled_torch_dense_moe(x, w_router, w_expert_0, w_expert_1, top_k)
-
+    if provider == 'functional':
+        target = functional.moe
+    elif provider == 'functional.compile':
+        torch._dynamo.reset()
+        target = torch.compile(functional.moe)
+    elif provider == 'torch-dense':
+        target = torch_dense_moe
+    elif provider == 'torch-dense.compile':
+        torch._dynamo.reset()
+        target = torch.compile(torch_dense_moe)
+    else:
         raise ValueError(f'unknown provider: {provider}')
+
+    def target_fn():
+        return target(x, w_router, w_expert_0, w_expert_1, top_k)
+
+    if provider.endswith('.compile'):
+        target_fn()
+        torch.cuda.synchronize()
 
     ms, min_ms, max_ms = triton.testing.do_bench(target_fn, quantiles=quantiles, rep=500)
     return ms, max_ms, min_ms
