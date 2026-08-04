@@ -5,23 +5,26 @@ import triton
 from ml_kernel_lab.kernel import triton_kernel
 
 
-PROVIDERS = ['triton', 'torch-grouped-mm']
-PROVIDER_NAMES = ['Triton', 'Torch Grouped MM']
-PROVIDER_STYLES = [('blue', '-'), ('green', '-')]
+PROVIDERS = ['triton', 'triton-autotuned', 'torch-grouped-mm']
+PROVIDER_NAMES = ['Triton Fixed', 'Triton Autotuned', 'Torch Grouped MM']
+PROVIDER_STYLES = [('blue', '-'), ('red', '-'), ('green', '-')]
 PRODUCTION_PROVIDERS = [
     'triton',
+    'triton-autotuned',
     'torch-grouped-mm',
     'torch-grouped-mm.compile',
     'torch-grouped-mm.max-autotune',
 ]
 PRODUCTION_PROVIDER_NAMES = [
-    'Triton',
+    'Triton Fixed',
+    'Triton Autotuned',
     'Torch Grouped MM',
     'Torch Grouped MM Compile',
     'Torch Grouped MM Max Autotune',
 ]
 PRODUCTION_PROVIDER_STYLES = [
     ('blue', '-'),
+    ('red', '-'),
     ('green', '-'),
     ('purple', '-'),
     ('orange', '-'),
@@ -136,8 +139,8 @@ def bench_moe_grouped_expert_gemm(
 
     expert_offsets, expert_capacity = make_balanced_expert_offsets(num_assignments, n_experts, device)
 
-    # grouped_mm requires offs[-1] to be smaller than the input length. Both
-    # providers receive the same padded storage and ignore its final row.
+    # grouped_mm requires offs[-1] to be smaller than the input length. Triton
+    # uses an exact-length view of the same storage so its M autotune key is exact.
     generator = torch.Generator(device=device).manual_seed(0)
     x_grouped = torch.randn(
         (num_assignments + 1, d_model),
@@ -145,6 +148,7 @@ def bench_moe_grouped_expert_gemm(
         device=device,
         generator=generator,
     )
+    x_triton = x_grouped[:num_assignments]
     w = torch.randn(
         (n_experts, d_model, d_ff),
         dtype=dtype,
@@ -158,7 +162,15 @@ def bench_moe_grouped_expert_gemm(
     def target_fn():
         if provider == 'triton':
             return triton_kernel.moe_grouped_expert_gemm_fwd_v1(
-                x_grouped,
+                x_triton,
+                w,
+                expert_offsets,
+                expert_capacity,
+            )
+
+        if provider == 'triton-autotuned':
+            return triton_kernel.moe_grouped_expert_gemm_fwd_v1_autotuned(
+                x_triton,
                 w,
                 expert_offsets,
                 expert_capacity,
@@ -168,6 +180,10 @@ def bench_moe_grouped_expert_gemm(
             return grouped_mm(x_grouped, w_grouped_mm, offs=grouped_mm_offsets)
 
         raise ValueError(f'unknown provider: {provider}')
+
+    if provider == 'triton-autotuned':
+        target_fn()
+        torch.cuda.synchronize()
 
     ms, min_ms, max_ms = triton.testing.do_bench(target_fn, quantiles=quantiles, rep=500)
     return ms, max_ms, min_ms
@@ -222,6 +238,7 @@ def bench_moe_grouped_expert_gemm_imbalance(
         device=device,
         generator=generator,
     )
+    x_triton = x_grouped[:num_assignments]
     w = torch.randn(
         (n_experts, d_model, d_ff),
         dtype=dtype,
@@ -235,7 +252,15 @@ def bench_moe_grouped_expert_gemm_imbalance(
     def target_fn():
         if provider == 'triton':
             return triton_kernel.moe_grouped_expert_gemm_fwd_v1(
-                x_grouped,
+                x_triton,
+                w,
+                expert_offsets,
+                expert_capacity,
+            )
+
+        if provider == 'triton-autotuned':
+            return triton_kernel.moe_grouped_expert_gemm_fwd_v1_autotuned(
+                x_triton,
                 w,
                 expert_offsets,
                 expert_capacity,
@@ -245,6 +270,10 @@ def bench_moe_grouped_expert_gemm_imbalance(
             return grouped_mm(x_grouped, w_grouped_mm, offs=grouped_mm_offsets)
 
         raise ValueError(f'unknown provider: {provider}')
+
+    if provider == 'triton-autotuned':
+        target_fn()
+        torch.cuda.synchronize()
 
     ms, min_ms, max_ms = triton.testing.do_bench(target_fn, quantiles=quantiles, rep=500)
     return ms, max_ms, min_ms
@@ -305,6 +334,7 @@ def bench_moe_grouped_expert_gemm_capacity(
         device=device,
         generator=generator,
     )
+    x_triton = x_grouped[:num_assignments]
     w = torch.randn(
         (n_experts, d_model, d_ff),
         dtype=dtype,
@@ -318,7 +348,15 @@ def bench_moe_grouped_expert_gemm_capacity(
     def target_fn():
         if provider == 'triton':
             return triton_kernel.moe_grouped_expert_gemm_fwd_v1(
-                x_grouped,
+                x_triton,
+                w,
+                expert_offsets,
+                expert_capacity,
+            )
+
+        if provider == 'triton-autotuned':
+            return triton_kernel.moe_grouped_expert_gemm_fwd_v1_autotuned(
+                x_triton,
                 w,
                 expert_offsets,
                 expert_capacity,
@@ -328,6 +366,10 @@ def bench_moe_grouped_expert_gemm_capacity(
             return grouped_mm(x_grouped, w_grouped_mm, offs=grouped_mm_offsets)
 
         raise ValueError(f'unknown provider: {provider}')
+
+    if provider == 'triton-autotuned':
+        target_fn()
+        torch.cuda.synchronize()
 
     ms, min_ms, max_ms = triton.testing.do_bench(target_fn, quantiles=quantiles, rep=500)
     return ms, max_ms, min_ms
@@ -374,7 +416,7 @@ def bench_moe_grouped_expert_gemm_production(
 ):
     dtype = torch.bfloat16
     grouped_mm = getattr(F, 'grouped_mm', None)
-    if provider != 'triton' and grouped_mm is None:
+    if not provider.startswith('triton') and grouped_mm is None:
         raise RuntimeError(
             f'torch.nn.functional.grouped_mm is unavailable in PyTorch {torch.__version__}; '
             'install a PyTorch build that provides the public grouped_mm API'
@@ -392,6 +434,7 @@ def bench_moe_grouped_expert_gemm_production(
         device=device,
         generator=generator,
     )
+    x_triton = x_grouped[:num_assignments]
     weight = torch.randn(
         (n_experts, d_model, d_ff),
         dtype=dtype,
@@ -404,7 +447,15 @@ def bench_moe_grouped_expert_gemm_production(
     if provider == 'triton':
         def target_fn():
             return triton_kernel.moe_grouped_expert_gemm_fwd_v1(
-                x_grouped,
+                x_triton,
+                weight,
+                expert_offsets,
+                expert_capacity,
+            )
+    elif provider == 'triton-autotuned':
+        def target_fn():
+            return triton_kernel.moe_grouped_expert_gemm_fwd_v1_autotuned(
+                x_triton,
                 weight,
                 expert_offsets,
                 expert_capacity,
@@ -428,6 +479,10 @@ def bench_moe_grouped_expert_gemm_production(
         if provider.endswith(('.compile', '.max-autotune')):
             target_fn()
             torch.cuda.synchronize()
+
+    if provider == 'triton-autotuned':
+        target_fn()
+        torch.cuda.synchronize()
 
     ms, min_ms, max_ms = triton.testing.do_bench(target_fn, quantiles=quantiles, rep=500)
     return ms, max_ms, min_ms
