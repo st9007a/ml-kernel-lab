@@ -92,13 +92,14 @@ def moe_grouped_expert_gemm_fwd_v1(
     expert_offsets = expert_offsets.contiguous()
 
     out = torch.empty((M, N), dtype=x_grouped.dtype, device=x_grouped.device)
-    BLOCK_M = 16
-    BLOCK_N = 64
+    BLOCK_M = 64
+    BLOCK_N = 128
     BLOCK_K = 32
 
     MAX_M_TILES = triton.cdiv(expert_capacity, BLOCK_M)
 
     grid = (n_experts * MAX_M_TILES, triton.cdiv(N, BLOCK_N))
+    num_warps = 4
 
     moe_grouped_expert_gemm_fwd_v1_fused_kernel[grid](
         x_grouped,
@@ -115,5 +116,6 @@ def moe_grouped_expert_gemm_fwd_v1(
         BLOCK_M,
         BLOCK_N,
         BLOCK_K,
+        num_warps=num_warps,
     )
     return out
