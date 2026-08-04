@@ -8,11 +8,21 @@ import triton
 from ml_kernel_lab.kernel.triton_kernel.moe import moe_grouped_expert_gemm_fwd_v1_fused_kernel
 
 
-BLOCK_M = 64
-BLOCK_N = 128
-BLOCK_K = 32
-NUM_WARPS = 4
-NUM_STAGES = 3
+@dataclass(frozen=True)
+class KernelConfig:
+    name: str
+    block_m: int
+    block_n: int
+    block_k: int
+    num_warps: int
+    num_stages: int = 3
+
+
+CONFIGS = [
+    KernelConfig('small', 64, 128, 32, 4),
+    KernelConfig('production_k32', 128, 128, 32, 8),
+    KernelConfig('production_k64', 128, 128, 64, 8),
+]
 
 
 @dataclass(frozen=True)
@@ -77,6 +87,11 @@ CASES = [
     Case('hot_875', 'hot=87.5%', hot_expert_counts(4096, 8, 0.875)),
     Case('model_small', 'balanced', balanced_counts(1024, 8), 128, 512),
     Case('model_large', 'balanced', balanced_counts(1024, 8), 512, 2048),
+    Case('production_small', 'balanced', balanced_counts(4096, 8), 1024, 4096),
+    Case('production_medium', 'balanced', balanced_counts(4096, 8), 2048, 8192),
+    Case('production_large_4096', 'balanced', balanced_counts(4096, 8), 4096, 14336),
+    Case('production_large_8192', 'balanced', balanced_counts(8192, 8), 4096, 14336),
+    Case('production_large_16384', 'balanced', balanced_counts(16384, 8), 4096, 14336),
 ]
 
 
@@ -116,29 +131,25 @@ def make_expert_offsets(expert_counts: tuple[int, ...], device: torch.device) ->
     return torch.tensor(offsets, dtype=torch.int32, device=device)
 
 
-def warmup_case(case: Case, device: torch.device) -> dict[str, Any]:
+def warmup_case(
+    case: Case,
+    config: KernelConfig,
+    device: torch.device,
+) -> dict[str, Any]:
     dtype = torch.bfloat16
     expert_offsets = make_expert_offsets(case.expert_counts, device)
-    x_grouped = torch.empty(
-        (case.num_assignments + 1, case.d_model),
-        dtype=dtype,
-        device=device,
-    )
-    w = torch.empty(
-        (case.n_experts, case.d_model, case.d_ff),
-        dtype=dtype,
-        device=device,
-    )
-    out = torch.empty(
-        (case.num_assignments + 1, case.d_ff),
-        dtype=dtype,
-        device=device,
-    )
+    # warmup compiles without executing, so full production-sized storage is unnecessary.
+    x_grouped = torch.empty((1,), dtype=dtype, device=device)
+    w = torch.empty((1,), dtype=dtype, device=device)
+    out = torch.empty((1,), dtype=dtype, device=device)
 
-    max_m_tiles = triton.cdiv(case.expert_capacity, BLOCK_M)
-    n_tiles = triton.cdiv(case.d_ff, BLOCK_N)
+    max_m_tiles = triton.cdiv(case.expert_capacity, config.block_m)
+    n_tiles = triton.cdiv(case.d_ff, config.block_n)
     grid = (case.n_experts * max_m_tiles, n_tiles)
-    active_m_tiles = sum(triton.cdiv(count, BLOCK_M) for count in case.expert_counts)
+    active_m_tiles = sum(
+        triton.cdiv(count, config.block_m)
+        for count in case.expert_counts
+    )
     launched_m_tiles = grid[0]
 
     compiled = moe_grouped_expert_gemm_fwd_v1_fused_kernel.warmup(
@@ -146,24 +157,29 @@ def warmup_case(case: Case, device: torch.device) -> dict[str, Any]:
         w,
         expert_offsets,
         out,
-        x_grouped.stride(0),
-        w.stride(0),
-        w.stride(1),
-        out.stride(0),
+        case.d_model,
+        case.d_model * case.d_ff,
+        case.d_ff,
+        case.d_ff,
         MAX_M_TILES=max_m_tiles,
         N=case.d_ff,
         K=case.d_model,
-        BLOCK_M=BLOCK_M,
-        BLOCK_N=BLOCK_N,
-        BLOCK_K=BLOCK_K,
+        BLOCK_M=config.block_m,
+        BLOCK_N=config.block_n,
+        BLOCK_K=config.block_k,
         grid=grid,
-        num_warps=NUM_WARPS,
-        num_stages=NUM_STAGES,
+        num_warps=config.num_warps,
+        num_stages=config.num_stages,
     )
 
     init_handles = getattr(compiled, '_init_handles', None)
     if init_handles is not None:
         init_handles()
+
+    kernel_metadata = read_metadata(compiled)
+    cta_threads = config.num_warps * 32
+    max_threads = kernel_metadata.pop('threads')
+    resident_ctas = max_threads // cta_threads if max_threads is not None else None
 
     return {
         'case': case.name,
@@ -177,12 +193,15 @@ def warmup_case(case: Case, device: torch.device) -> dict[str, Any]:
         'active_M': active_m_tiles,
         'launched_M': launched_m_tiles,
         'overlaunch': f'{launched_m_tiles / active_m_tiles:.2f}x',
-        **read_metadata(compiled),
+        **kernel_metadata,
+        'cta_threads': cta_threads,
+        'max_threads': max_threads,
+        'resident_ctas': resident_ctas,
         'status': 'ok',
     }
 
 
-def print_rows(rows: list[dict[str, Any]]) -> None:
+def print_rows(config: KernelConfig, rows: list[dict[str, Any]]) -> None:
     columns = [
         'case',
         'routing',
@@ -197,7 +216,9 @@ def print_rows(rows: list[dict[str, Any]]) -> None:
         'overlaunch',
         'regs',
         'spills',
-        'threads',
+        'cta_threads',
+        'max_threads',
+        'resident_ctas',
         'shared',
         'status',
     ]
@@ -207,8 +228,9 @@ def print_rows(rows: list[dict[str, Any]]) -> None:
     }
 
     print(
-        f'config: BLOCK_M={BLOCK_M}, BLOCK_N={BLOCK_N}, BLOCK_K={BLOCK_K}, '
-        f'num_warps={NUM_WARPS}, num_stages={NUM_STAGES}'
+        f'config={config.name}: BLOCK_M={config.block_m}, BLOCK_N={config.block_n}, '
+        f'BLOCK_K={config.block_k}, num_warps={config.num_warps}, '
+        f'num_stages={config.num_stages}'
     )
     print('  '.join(f'{column:<{widths[column]}}' for column in columns))
     print('  '.join('-' * widths[column] for column in columns))
@@ -219,6 +241,11 @@ def print_rows(rows: list[dict[str, Any]]) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description='Show grouped expert GEMM Triton kernel metadata.')
     parser.add_argument('--device', type=int, default=0)
+    parser.add_argument(
+        '--config',
+        choices=['all', *(config.name for config in CONFIGS)],
+        default='all',
+    )
     args = parser.parse_args()
 
     if not torch.cuda.is_available():
@@ -227,25 +254,32 @@ def main() -> None:
     torch.cuda.set_device(args.device)
     device = torch.device(f'cuda:{args.device}')
 
-    rows = []
-    for case in CASES:
-        try:
-            rows.append(warmup_case(case, device))
-        except Exception as exc:
-            rows.append(
-                {
-                    'case': case.name,
-                    'routing': case.distribution,
-                    'M': case.num_assignments,
-                    'E': case.n_experts,
-                    'capacity': case.expert_capacity,
-                    'K': case.d_model,
-                    'N': case.d_ff,
-                    'status': format_status(exc),
-                }
-            )
+    selected_configs = CONFIGS
+    if args.config != 'all':
+        selected_configs = [config for config in CONFIGS if config.name == args.config]
 
-    print_rows(rows)
+    for config_idx, config in enumerate(selected_configs):
+        rows = []
+        for case in CASES:
+            try:
+                rows.append(warmup_case(case, config, device))
+            except Exception as exc:
+                rows.append(
+                    {
+                        'case': case.name,
+                        'routing': case.distribution,
+                        'M': case.num_assignments,
+                        'E': case.n_experts,
+                        'capacity': case.expert_capacity,
+                        'K': case.d_model,
+                        'N': case.d_ff,
+                        'status': format_status(exc),
+                    }
+                )
+
+        if config_idx:
+            print()
+        print_rows(config, rows)
 
 
 if __name__ == '__main__':
