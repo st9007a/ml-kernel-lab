@@ -466,10 +466,16 @@ def bench_moe_grouped_expert_gemm_production(
             target = torch_grouped_mm_forward
         elif provider == 'torch-grouped-mm.compile':
             torch._dynamo.reset()
-            target = torch.compile(torch_grouped_mm_forward)
+            target = torch.compile(
+                torch_grouped_mm_forward,
+                options={'triton.cudagraphs': False},
+            )
         elif provider == 'torch-grouped-mm.max-autotune':
             torch._dynamo.reset()
-            target = torch.compile(torch_grouped_mm_forward, mode='max-autotune')
+            target = torch.compile(
+                torch_grouped_mm_forward,
+                mode='max-autotune-no-cudagraphs',
+            )
         else:
             raise ValueError(f'unknown provider: {provider}')
 

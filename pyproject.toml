@@ -22,3 +22,6 @@ dev = [
     "matplotlib",
     "pandas",
 ]
+
+[tool.uv]
+torch-backend = "auto"
