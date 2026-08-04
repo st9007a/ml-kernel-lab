@@ -176,10 +176,21 @@ def bench_moe(
     device=torch.device('cuda'),
 ):
     dtype = torch.bfloat16
-    x = torch.randn((1, num_tokens, d_model), dtype=dtype, device=device)
-    w_router = torch.randn((d_model, n_experts), dtype=dtype, device=device) / d_model**0.5
-    w_expert_0 = torch.randn((n_experts, d_model, d_ff), dtype=dtype, device=device) / d_model**0.5
-    w_expert_1 = torch.randn((n_experts, d_ff, d_model), dtype=dtype, device=device) / d_ff**0.5
+    generator = torch.Generator(device=device).manual_seed(0)
+    x = torch.randn((1, num_tokens, d_model), dtype=dtype, device=device, generator=generator)
+    w_router = torch.randn((d_model, n_experts), dtype=dtype, device=device, generator=generator) / d_model**0.5
+    w_expert_0 = torch.randn(
+        (n_experts, d_model, d_ff),
+        dtype=dtype,
+        device=device,
+        generator=generator,
+    ) / d_model**0.5
+    w_expert_1 = torch.randn(
+        (n_experts, d_ff, d_model),
+        dtype=dtype,
+        device=device,
+        generator=generator,
+    ) / d_ff**0.5
     quantiles = [0.5, 0.2, 0.8]
 
     if provider == 'functional':
