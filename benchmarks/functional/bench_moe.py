@@ -43,7 +43,7 @@ def build_torch_grouped_mm_routing(x, topk_weights, topk_inds, n_experts):
     expert_offsets = torch.empty((n_experts + 1,), dtype=torch.int32, device=x.device)
     expert_offsets[0] = 0
     expert_offsets[1:] = counts
-    expert_offsets = torch.cumsum(expert_offsets, dim=0)
+    expert_offsets = torch.cumsum(expert_offsets, dim=0, dtype=torch.int32)
 
     return x_grouped, expert_offsets, token_ids_sorted, router_weights_sorted
 
