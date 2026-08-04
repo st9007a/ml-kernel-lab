@@ -16,3 +16,12 @@
 ### Performance
 
 See `benchmarks/triton_kernel/results`
+
+### Development
+
+Install with editable mode + dev dependencies
+
+```
+pip install uv
+uv pip install --system -e . --group dev
+```
