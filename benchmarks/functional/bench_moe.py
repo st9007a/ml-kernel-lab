@@ -5,6 +5,10 @@ import triton
 from ml_kernel_lab import functional
 
 
+def grouped_mm_weight_layout(weight):
+    return weight.transpose(-2, -1).contiguous().transpose(-2, -1)
+
+
 def torch_dense_moe(x, w_router, w_expert_0, w_expert_1, top_k):
     router_logits = x @ w_router
     topk_logits, topk_inds = router_logits.topk(k=top_k, dim=-1)
@@ -191,6 +195,11 @@ def bench_moe(
         device=device,
         generator=generator,
     ) / d_ff**0.5
+    if provider.startswith('torch-grouped-mm'):
+        # Keep the same logical values while using grouped_mm's preferred
+        # column-major storage for each expert matrix.
+        w_expert_0 = grouped_mm_weight_layout(w_expert_0)
+        w_expert_1 = grouped_mm_weight_layout(w_expert_1)
     quantiles = [0.5, 0.2, 0.8]
 
     if provider == 'functional':

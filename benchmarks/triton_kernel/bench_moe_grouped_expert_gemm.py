@@ -10,6 +10,10 @@ PROVIDER_NAMES = ['Triton', 'Torch Grouped MM']
 PROVIDER_STYLES = [('blue', '-'), ('green', '-')]
 
 
+def grouped_mm_weight_layout(weight):
+    return weight.transpose(-2, -1).contiguous().transpose(-2, -1)
+
+
 def make_balanced_expert_offsets(num_assignments, n_experts, device):
     assignments_per_expert, remainder = divmod(num_assignments, n_experts)
     counts = [assignments_per_expert + (expert_id < remainder) for expert_id in range(n_experts)]
@@ -112,8 +116,20 @@ def bench_moe_grouped_expert_gemm(
 
     # grouped_mm requires offs[-1] to be smaller than the input length. Both
     # providers receive the same padded storage and ignore its final row.
-    x_grouped = torch.randn((num_assignments + 1, d_model), dtype=dtype, device=device)
-    w = torch.randn((n_experts, d_model, d_ff), dtype=dtype, device=device)
+    generator = torch.Generator(device=device).manual_seed(0)
+    x_grouped = torch.randn(
+        (num_assignments + 1, d_model),
+        dtype=dtype,
+        device=device,
+        generator=generator,
+    )
+    w = torch.randn(
+        (n_experts, d_model, d_ff),
+        dtype=dtype,
+        device=device,
+        generator=generator,
+    )
+    w_grouped_mm = grouped_mm_weight_layout(w)
     grouped_mm_offsets = expert_offsets[1:]
     quantiles = [0.5, 0.2, 0.8]
 
@@ -127,7 +143,7 @@ def bench_moe_grouped_expert_gemm(
             )
 
         if provider == 'torch-grouped-mm':
-            return grouped_mm(x_grouped, w, offs=grouped_mm_offsets)
+            return grouped_mm(x_grouped, w_grouped_mm, offs=grouped_mm_offsets)
 
         raise ValueError(f'unknown provider: {provider}')
 
@@ -177,8 +193,20 @@ def bench_moe_grouped_expert_gemm_imbalance(
         device,
     )
 
-    x_grouped = torch.randn((num_assignments + 1, d_model), dtype=dtype, device=device)
-    w = torch.randn((n_experts, d_model, d_ff), dtype=dtype, device=device)
+    generator = torch.Generator(device=device).manual_seed(0)
+    x_grouped = torch.randn(
+        (num_assignments + 1, d_model),
+        dtype=dtype,
+        device=device,
+        generator=generator,
+    )
+    w = torch.randn(
+        (n_experts, d_model, d_ff),
+        dtype=dtype,
+        device=device,
+        generator=generator,
+    )
+    w_grouped_mm = grouped_mm_weight_layout(w)
     grouped_mm_offsets = expert_offsets[1:]
     quantiles = [0.5, 0.2, 0.8]
 
@@ -192,7 +220,7 @@ def bench_moe_grouped_expert_gemm_imbalance(
             )
 
         if provider == 'torch-grouped-mm':
-            return grouped_mm(x_grouped, w, offs=grouped_mm_offsets)
+            return grouped_mm(x_grouped, w_grouped_mm, offs=grouped_mm_offsets)
 
         raise ValueError(f'unknown provider: {provider}')
 
@@ -248,8 +276,20 @@ def bench_moe_grouped_expert_gemm_capacity(
     if expert_capacity > num_tokens:
         raise ValueError('expert_capacity cannot exceed the dropless top-k upper bound')
 
-    x_grouped = torch.randn((num_assignments + 1, d_model), dtype=dtype, device=device)
-    w = torch.randn((n_experts, d_model, d_ff), dtype=dtype, device=device)
+    generator = torch.Generator(device=device).manual_seed(0)
+    x_grouped = torch.randn(
+        (num_assignments + 1, d_model),
+        dtype=dtype,
+        device=device,
+        generator=generator,
+    )
+    w = torch.randn(
+        (n_experts, d_model, d_ff),
+        dtype=dtype,
+        device=device,
+        generator=generator,
+    )
+    w_grouped_mm = grouped_mm_weight_layout(w)
     grouped_mm_offsets = expert_offsets[1:]
     quantiles = [0.5, 0.2, 0.8]
 
@@ -263,7 +303,7 @@ def bench_moe_grouped_expert_gemm_capacity(
             )
 
         if provider == 'torch-grouped-mm':
-            return grouped_mm(x_grouped, w, offs=grouped_mm_offsets)
+            return grouped_mm(x_grouped, w_grouped_mm, offs=grouped_mm_offsets)
 
         raise ValueError(f'unknown provider: {provider}')
 
