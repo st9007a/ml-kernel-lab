@@ -7,7 +7,10 @@ authors = [
     { name = "Uno Wu", email = "st9007a@gmail.com" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "triton",
+    "torch>=2.10.0",
+]
 
 [build-system]
 requires = ["uv_build>=0.10.12,<0.11.0"]
@@ -16,4 +19,6 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
+    "matplotlib",
+    "pandas",
 ]
