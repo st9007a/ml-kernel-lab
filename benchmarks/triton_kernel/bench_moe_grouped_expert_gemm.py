@@ -200,6 +200,77 @@ def bench_moe_grouped_expert_gemm_imbalance(
     return ms, max_ms, min_ms
 
 
+@triton.testing.perf_report([
+    triton.testing.Benchmark(
+        x_names=['expert_capacity'],
+        x_vals=[512, 1024, 1536, 2048],
+        line_arg='provider',
+        line_vals=PROVIDERS,
+        line_names=PROVIDER_NAMES,
+        styles=PROVIDER_STYLES,
+        ylabel='ms',
+        plot_name='moe-grouped-expert-gemm-forward-latency-expert-capacity',
+        args={
+            'num_tokens': 2048,
+            'top_k': 2,
+            'n_experts': 8,
+            'd_model': 256,
+            'd_ff': 1024,
+        },
+    )
+])
+def bench_moe_grouped_expert_gemm_capacity(
+    num_tokens,
+    top_k,
+    n_experts,
+    d_model,
+    d_ff,
+    expert_capacity,
+    provider,
+    device=torch.device('cuda'),
+):
+    dtype = torch.bfloat16
+    grouped_mm = getattr(F, 'grouped_mm', None)
+    if provider == 'torch-grouped-mm' and grouped_mm is None:
+        raise RuntimeError(
+            f'torch.nn.functional.grouped_mm is unavailable in PyTorch {torch.__version__}; '
+            'install a PyTorch build that provides the public grouped_mm API'
+        )
+
+    num_assignments = num_tokens * top_k
+    expert_offsets, actual_expert_capacity = make_balanced_expert_offsets(
+        num_assignments,
+        n_experts,
+        device,
+    )
+    if expert_capacity < actual_expert_capacity:
+        raise ValueError('expert_capacity must cover the largest expert assignment count')
+    if expert_capacity > num_tokens:
+        raise ValueError('expert_capacity cannot exceed the dropless top-k upper bound')
+
+    x_grouped = torch.randn((num_assignments + 1, d_model), dtype=dtype, device=device)
+    w = torch.randn((n_experts, d_model, d_ff), dtype=dtype, device=device)
+    grouped_mm_offsets = expert_offsets[1:]
+    quantiles = [0.5, 0.2, 0.8]
+
+    def target_fn():
+        if provider == 'triton':
+            return triton_kernel.moe_grouped_expert_gemm_fwd_v1(
+                x_grouped,
+                w,
+                expert_offsets,
+                expert_capacity,
+            )
+
+        if provider == 'torch-grouped-mm':
+            return grouped_mm(x_grouped, w, offs=grouped_mm_offsets)
+
+        raise ValueError(f'unknown provider: {provider}')
+
+    ms, min_ms, max_ms = triton.testing.do_bench(target_fn, quantiles=quantiles, rep=500)
+    return ms, max_ms, min_ms
+
+
 if __name__ == '__main__':
     if not hasattr(F, 'grouped_mm'):
         raise RuntimeError(
@@ -209,3 +280,4 @@ if __name__ == '__main__':
 
     bench_moe_grouped_expert_gemm.run(print_data=True, return_df=True)
     bench_moe_grouped_expert_gemm_imbalance.run(print_data=True, return_df=True)
+    bench_moe_grouped_expert_gemm_capacity.run(print_data=True, return_df=True)
