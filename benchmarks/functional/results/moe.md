@@ -31,3 +31,59 @@ moe-forward-latency-model-size:
 1    256.0  1024.0             0.325344                     0.171296                   0.520832                           0.437136          0.301472                  0.254528
 2    512.0  2048.0             0.467056                     0.351024                   0.575760                           0.492864          0.848832                  0.790976
 ```
+
+## RTX A5000
+
+```
+moe-forward-latency-num-tokens:
+   num_tokens  Functional MoE (ms)  Functional MoE Compile (ms)  Torch Grouped MM MoE (ms)  Torch Grouped MM MoE Compile (ms)  Torch Dense (ms)  Torch Dense Compile (ms)
+0       128.0             0.303328                     0.073856                   0.515360                           0.402464          0.113056                  0.096064
+1       256.0             0.332320                     0.087360                   0.525760                           0.366240          0.104864                  0.089088
+2       512.0             0.339104                     0.123968                   0.529808                           0.444864          0.147776                  0.129312
+3      1024.0             0.342880                     0.167296                   0.518240                           0.431136          0.245376                  0.223520
+4      2048.0             0.434336                     0.221952                   0.539616                           0.452768          0.434112                  0.403360
+moe-forward-latency-num-experts:
+   n_experts  Functional MoE (ms)  Functional MoE Compile (ms)  Torch Grouped MM MoE (ms)  Torch Grouped MM MoE Compile (ms)  Torch Dense (ms)  Torch Dense Compile (ms)
+0        4.0             0.337440                     0.112288                   0.416384                           0.330912          0.093824                  0.076224
+1        8.0             0.339200                     0.122944                   0.530176                           0.444128          0.146752                  0.129632
+2       16.0             0.301728                     0.148544                   0.633024                           0.637024          0.251776                  0.231232
+3       32.0             0.337728                     0.157152                   1.150432                           1.021952          0.463232                  0.439504
+moe-forward-latency-top-k:
+   top_k  Functional MoE (ms)  Functional MoE Compile (ms)  Torch Grouped MM MoE (ms)  Torch Grouped MM MoE Compile (ms)  Torch Dense (ms)  Torch Dense Compile (ms)
+0    1.0             0.329632                     0.092448                   0.671968                           0.530880          0.141056                  0.124064
+1    2.0             0.340800                     0.123232                   0.553280                           0.445984          0.147168                  0.129952
+2    4.0             0.341824                     0.150240                   0.518848                           0.426720          0.151104                  0.134752
+moe-forward-latency-model-size:
+   d_model    d_ff  Functional MoE (ms)  Functional MoE Compile (ms)  Torch Grouped MM MoE (ms)  Torch Grouped MM MoE Compile (ms)  Torch Dense (ms)  Torch Dense Compile (ms)
+0    128.0   512.0             0.335872                     0.099184                   0.518464                           0.427968          0.086720                  0.069184
+1    256.0  1024.0             0.342944                     0.122912                   0.536640                           0.446480          0.147456                  0.130128
+2    512.0  2048.0             0.337312                     0.229120                   0.475328                           0.398640          0.370048                  0.342848
+```
+
+## RTX 5090
+
+```
+moe-forward-latency-num-tokens:
+   num_tokens  Functional MoE (ms)  Functional MoE Compile (ms)  Torch Grouped MM MoE (ms)  Torch Grouped MM MoE Compile (ms)  Torch Dense (ms)  Torch Dense Compile (ms)
+0       128.0             0.141312                     0.063136                   0.211968                           0.150528          0.063520                  0.045504
+1       256.0             0.148480                     0.069760                   0.222208                           0.161312          0.076224                  0.057376
+2       512.0             0.148480                     0.094336                   0.229376                           0.192512          0.092640                  0.074176
+3      1024.0             0.162784                     0.110112                   0.237536                           0.192480          0.111040                  0.091712
+4      2048.0             0.169952                     0.116704                   0.262112                           0.218080          0.177728                  0.158144
+moe-forward-latency-num-experts:
+   n_experts  Functional MoE (ms)  Functional MoE Compile (ms)  Torch Grouped MM MoE (ms)  Torch Grouped MM MoE Compile (ms)  Torch Dense (ms)  Torch Dense Compile (ms)
+0        4.0             0.148480                     0.096256                   0.182272                           0.141312          0.075776                  0.057344
+1        8.0             0.149504                     0.096256                   0.228352                           0.192512          0.094656                  0.074176
+2       16.0             0.160768                     0.108704                   0.313952                           0.275456          0.196320                  0.173984
+3       32.0             0.156672                     0.104448                   0.456704                           0.415712          0.239616                  0.213760
+moe-forward-latency-top-k:
+   top_k  Functional MoE (ms)  Functional MoE Compile (ms)  Torch Grouped MM MoE (ms)  Torch Grouped MM MoE Compile (ms)  Torch Dense (ms)  Torch Dense Compile (ms)
+0    1.0             0.143360                     0.065536                   0.212992                           0.151552          0.088064                  0.068032
+1    2.0             0.149504                     0.096256                   0.228352                           0.194560          0.094656                  0.074176
+2    4.0             0.152576                     0.099776                   0.238560                           0.193504          0.094656                  0.075808
+moe-forward-latency-model-size:
+   d_model    d_ff  Functional MoE (ms)  Functional MoE Compile (ms)  Torch Grouped MM MoE (ms)  Torch Grouped MM MoE Compile (ms)  Torch Dense (ms)  Torch Dense Compile (ms)
+0    128.0   512.0             0.143232                     0.081888                   0.206848                           0.162848          0.060992                  0.045408
+1    256.0  1024.0             0.149504                     0.096256                   0.229376                           0.193536          0.094656                  0.074176
+2    512.0  2048.0             0.198624                     0.147456                   0.250880                           0.210912          0.176128                  0.155648
+```

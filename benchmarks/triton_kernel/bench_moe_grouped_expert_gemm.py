@@ -5,19 +5,21 @@ import triton
 from ml_kernel_lab.kernel import triton_kernel
 
 
-PROVIDERS = ['triton', 'triton-autotuned', 'torch-grouped-mm']
-PROVIDER_NAMES = ['Triton Fixed', 'Triton Autotuned', 'Torch Grouped MM']
-PROVIDER_STYLES = [('blue', '-'), ('red', '-'), ('green', '-')]
+PROVIDERS = ['triton', 'triton-autotuned', 'triton-v2', 'torch-grouped-mm']
+PROVIDER_NAMES = ['Triton v1 Fixed', 'Triton v1 Autotuned', 'Triton v2', 'Torch Grouped MM']
+PROVIDER_STYLES = [('blue', '-'), ('red', '-'), ('cyan', '-'), ('green', '-')]
 PRODUCTION_PROVIDERS = [
     'triton',
     'triton-autotuned',
+    'triton-v2',
     'torch-grouped-mm',
     'torch-grouped-mm.compile',
     'torch-grouped-mm.max-autotune',
 ]
 PRODUCTION_PROVIDER_NAMES = [
-    'Triton Fixed',
-    'Triton Autotuned',
+    'Triton v1 Fixed',
+    'Triton v1 Autotuned',
+    'Triton v2',
     'Torch Grouped MM',
     'Torch Grouped MM Compile',
     'Torch Grouped MM Max Autotune',
@@ -25,6 +27,7 @@ PRODUCTION_PROVIDER_NAMES = [
 PRODUCTION_PROVIDER_STYLES = [
     ('blue', '-'),
     ('red', '-'),
+    ('cyan', '-'),
     ('green', '-'),
     ('purple', '-'),
     ('orange', '-'),
@@ -176,6 +179,14 @@ def bench_moe_grouped_expert_gemm(
                 expert_capacity,
             )
 
+        if provider == 'triton-v2':
+            return triton_kernel.moe_grouped_expert_gemm_fwd_v2(
+                x_triton,
+                w,
+                expert_offsets,
+                expert_capacity,
+            )
+
         if provider == 'torch-grouped-mm':
             return grouped_mm(x_grouped, w_grouped_mm, offs=grouped_mm_offsets)
 
@@ -260,6 +271,14 @@ def bench_moe_grouped_expert_gemm_imbalance(
 
         if provider == 'triton-autotuned':
             return triton_kernel.moe_grouped_expert_gemm_fwd_v1_autotuned(
+                x_triton,
+                w,
+                expert_offsets,
+                expert_capacity,
+            )
+
+        if provider == 'triton-v2':
+            return triton_kernel.moe_grouped_expert_gemm_fwd_v2(
                 x_triton,
                 w,
                 expert_offsets,
@@ -362,6 +381,14 @@ def bench_moe_grouped_expert_gemm_capacity(
                 expert_capacity,
             )
 
+        if provider == 'triton-v2':
+            return triton_kernel.moe_grouped_expert_gemm_fwd_v2(
+                x_triton,
+                w,
+                expert_offsets,
+                expert_capacity,
+            )
+
         if provider == 'torch-grouped-mm':
             return grouped_mm(x_grouped, w_grouped_mm, offs=grouped_mm_offsets)
 
@@ -455,6 +482,14 @@ def bench_moe_grouped_expert_gemm_production(
     elif provider == 'triton-autotuned':
         def target_fn():
             return triton_kernel.moe_grouped_expert_gemm_fwd_v1_autotuned(
+                x_triton,
+                weight,
+                expert_offsets,
+                expert_capacity,
+            )
+    elif provider == 'triton-v2':
+        def target_fn():
+            return triton_kernel.moe_grouped_expert_gemm_fwd_v2(
                 x_triton,
                 weight,
                 expert_offsets,

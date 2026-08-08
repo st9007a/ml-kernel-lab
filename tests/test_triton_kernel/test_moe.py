@@ -103,3 +103,44 @@ def test_grouped_expert_gemm_v1_autotuned_matches_torch_with_overlaunch():
     expected = torch_grouped_expert_gemm(x_grouped, w, expert_offsets)
 
     torch.testing.assert_close(actual, expected, rtol=3e-2, atol=5e-2)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA required')
+@pytest.mark.parametrize(
+    ('expert_counts', 'k', 'n', 'expert_capacity'),
+    [
+        ([1, 0, 17, 5], 64, 257, 64),
+        ([577, 33, 0, 129], 72, 257, 704),
+    ],
+)
+@pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
+def test_grouped_expert_gemm_v2_matches_torch(
+    expert_counts,
+    k,
+    n,
+    expert_capacity,
+    dtype,
+):
+    expert_offsets_values = [0]
+    for count in expert_counts:
+        expert_offsets_values.append(expert_offsets_values[-1] + count)
+
+    total_assignments = expert_offsets_values[-1]
+    n_experts = len(expert_counts)
+
+    x_grouped = torch.randn((total_assignments, k), dtype=dtype, device='cuda')
+    w = torch.randn((n_experts, k, n), dtype=dtype, device='cuda')
+    expert_offsets = torch.tensor(expert_offsets_values, dtype=torch.int32, device='cuda')
+
+    actual = triton_kernel.moe_grouped_expert_gemm_fwd_v2(
+        x_grouped,
+        w,
+        expert_offsets,
+        expert_capacity,
+    )
+    expected = torch_grouped_expert_gemm(x_grouped, w, expert_offsets)
+
+    if dtype is torch.bfloat16:
+        torch.testing.assert_close(actual, expected, rtol=3e-2, atol=5e-2)
+    else:
+        torch.testing.assert_close(actual, expected, rtol=1e-2, atol=1e-2)
