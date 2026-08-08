@@ -5,13 +5,20 @@ import triton
 from ml_kernel_lab.kernel import triton_kernel
 
 
-PROVIDERS = ['triton', 'triton-autotuned', 'triton-v2', 'torch-grouped-mm']
-PROVIDER_NAMES = ['Triton v1 Fixed', 'Triton v1 Autotuned', 'Triton v2', 'Torch Grouped MM']
-PROVIDER_STYLES = [('blue', '-'), ('red', '-'), ('cyan', '-'), ('green', '-')]
+PROVIDERS = ['triton', 'triton-autotuned', 'triton-v2', 'triton-v2-autotuned', 'torch-grouped-mm']
+PROVIDER_NAMES = [
+    'Triton v1 Fixed',
+    'Triton v1 Autotuned',
+    'Triton v2',
+    'Triton v2 Autotuned',
+    'Torch Grouped MM',
+]
+PROVIDER_STYLES = [('blue', '-'), ('red', '-'), ('cyan', '-'), ('purple', '-'), ('green', '-')]
 PRODUCTION_PROVIDERS = [
     'triton',
     'triton-autotuned',
     'triton-v2',
+    'triton-v2-autotuned',
     'torch-grouped-mm',
     'torch-grouped-mm.compile',
     'torch-grouped-mm.max-autotune',
@@ -20,6 +27,7 @@ PRODUCTION_PROVIDER_NAMES = [
     'Triton v1 Fixed',
     'Triton v1 Autotuned',
     'Triton v2',
+    'Triton v2 Autotuned',
     'Torch Grouped MM',
     'Torch Grouped MM Compile',
     'Torch Grouped MM Max Autotune',
@@ -28,6 +36,7 @@ PRODUCTION_PROVIDER_STYLES = [
     ('blue', '-'),
     ('red', '-'),
     ('cyan', '-'),
+    ('magenta', '-'),
     ('green', '-'),
     ('purple', '-'),
     ('orange', '-'),
@@ -237,12 +246,20 @@ def bench_moe_grouped_expert_gemm(
                 expert_capacity,
             )
 
+        if provider == 'triton-v2-autotuned':
+            return triton_kernel.moe_grouped_expert_gemm_fwd_v2_autotuned(
+                x_triton,
+                w,
+                expert_offsets,
+                expert_capacity,
+            )
+
         if provider == 'torch-grouped-mm':
             return grouped_mm(x_grouped, w_grouped_mm, offs=grouped_mm_offsets)
 
         raise ValueError(f'unknown provider: {provider}')
 
-    if provider == 'triton-autotuned':
+    if provider in ('triton-autotuned', 'triton-v2-autotuned'):
         target_fn()
         torch.cuda.synchronize()
 
@@ -335,12 +352,20 @@ def bench_moe_grouped_expert_gemm_imbalance(
                 expert_capacity,
             )
 
+        if provider == 'triton-v2-autotuned':
+            return triton_kernel.moe_grouped_expert_gemm_fwd_v2_autotuned(
+                x_triton,
+                w,
+                expert_offsets,
+                expert_capacity,
+            )
+
         if provider == 'torch-grouped-mm':
             return grouped_mm(x_grouped, w_grouped_mm, offs=grouped_mm_offsets)
 
         raise ValueError(f'unknown provider: {provider}')
 
-    if provider == 'triton-autotuned':
+    if provider in ('triton-autotuned', 'triton-v2-autotuned'):
         target_fn()
         torch.cuda.synchronize()
 
@@ -439,12 +464,20 @@ def bench_moe_grouped_expert_gemm_capacity(
                 expert_capacity,
             )
 
+        if provider == 'triton-v2-autotuned':
+            return triton_kernel.moe_grouped_expert_gemm_fwd_v2_autotuned(
+                x_triton,
+                w,
+                expert_offsets,
+                expert_capacity,
+            )
+
         if provider == 'torch-grouped-mm':
             return grouped_mm(x_grouped, w_grouped_mm, offs=grouped_mm_offsets)
 
         raise ValueError(f'unknown provider: {provider}')
 
-    if provider == 'triton-autotuned':
+    if provider in ('triton-autotuned', 'triton-v2-autotuned'):
         target_fn()
         torch.cuda.synchronize()
 
@@ -545,6 +578,14 @@ def bench_moe_grouped_expert_gemm_production(
                 expert_offsets,
                 expert_capacity,
             )
+    elif provider == 'triton-v2-autotuned':
+        def target_fn():
+            return triton_kernel.moe_grouped_expert_gemm_fwd_v2_autotuned(
+                x_triton,
+                weight,
+                expert_offsets,
+                expert_capacity,
+            )
     else:
         weight = grouped_mm_weight_layout(weight)
         if provider == 'torch-grouped-mm':
@@ -571,7 +612,7 @@ def bench_moe_grouped_expert_gemm_production(
             target_fn()
             torch.cuda.synchronize()
 
-    if provider == 'triton-autotuned':
+    if provider in ('triton-autotuned', 'triton-v2-autotuned'):
         target_fn()
         torch.cuda.synchronize()
 
