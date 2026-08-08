@@ -169,12 +169,22 @@ moe_grouped_expert_gemm_fwd_v1_autotuned_fused_kernel = triton.autotune(
 moe_grouped_expert_gemm_fwd_v2_autotuned_fused_kernel = triton.autotune(
     configs=[
         triton.Config(
+            {'BLOCK_M': 64, 'BLOCK_N': 128, 'BLOCK_K': 32, 'GROUP_SIZE_M': 4},
+            num_warps=4,
+            num_stages=3,
+        ),
+        triton.Config(
             {'BLOCK_M': 64, 'BLOCK_N': 128, 'BLOCK_K': 32, 'GROUP_SIZE_M': 8},
             num_warps=4,
             num_stages=3,
         ),
         triton.Config(
             {'BLOCK_M': 64, 'BLOCK_N': 128, 'BLOCK_K': 32, 'GROUP_SIZE_M': 16},
+            num_warps=4,
+            num_stages=3,
+        ),
+        triton.Config(
+            {'BLOCK_M': 64, 'BLOCK_N': 128, 'BLOCK_K': 32, 'GROUP_SIZE_M': 32},
             num_warps=4,
             num_stages=3,
         ),
