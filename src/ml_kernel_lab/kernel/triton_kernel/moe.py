@@ -83,7 +83,7 @@ def moe_grouped_expert_gemm_fwd_v1_fused_kernel(
         n_tile_offsets = expert_id * w_stride_e + k_start_offsets[:, None] * w_stride_row + cols[None, :]
         n_tile = tl.load(w_ptr + n_tile_offsets, mask=k_mask[:, None] & n_mask[None, :], other=0.)
 
-        acc += tl.dot(m_tile, n_tile)
+        acc = tl.dot(m_tile, n_tile, acc=acc)
 
     out_offsets = rows[:, None] * out_stride_row + cols[None, :]
     tl.store(out_ptr + out_offsets, acc, mask=m_mask[:, None] & n_mask[None, :])
@@ -158,7 +158,7 @@ def moe_grouped_expert_gemm_fwd_v2_fused_kernel(
         n_tile_offsets = expert_id * w_stride_e + k_start_offsets[:, None] * w_stride_row + cols[None, :]
         n_tile = tl.load(w_ptr + n_tile_offsets, mask=k_mask[:, None] & n_mask[None, :], other=0.)
 
-        acc += tl.dot(m_tile, n_tile)
+        acc = tl.dot(m_tile, n_tile, acc=acc)
 
     out_offsets = rows[:, None] * out_stride_row + cols[None, :]
     tl.store(out_ptr + out_offsets, acc, mask=m_mask[:, None] & n_mask[None, :])

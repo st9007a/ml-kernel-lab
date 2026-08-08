@@ -23,5 +23,12 @@ Install with editable mode + dev dependencies
 
 ```
 pip install uv
-uv pip install --system -e . --group dev
+
+# Install to the system
+uv pip install --system --break-system-packages -e . --group dev
+
+
+# Install to the venv
+uv venv
+uv pip install -e . --group dev
 ```
