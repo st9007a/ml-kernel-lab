@@ -32,6 +32,16 @@ PRODUCTION_PROVIDER_STYLES = [
     ('purple', '-'),
     ('orange', '-'),
 ]
+GROUP_SIZE_M_VALUES = [1, 2, 4, 8, 16, 32]
+GROUP_SIZE_M_NAMES = [f'GROUP_SIZE_M={group_size_m}' for group_size_m in GROUP_SIZE_M_VALUES]
+GROUP_SIZE_M_STYLES = [
+    ('blue', '-'),
+    ('red', '-'),
+    ('green', '-'),
+    ('orange', '-'),
+    ('purple', '-'),
+    ('cyan', '-'),
+]
 
 
 def grouped_mm_weight_layout(weight):
@@ -76,6 +86,46 @@ def make_imbalanced_expert_offsets(num_assignments, n_experts, hot_expert_share,
         offsets.append(offsets[-1] + count)
 
     return torch.tensor(offsets, dtype=torch.int32, device=device), max(counts)
+
+
+def launch_moe_grouped_expert_gemm_v2(
+    x_grouped,
+    weight,
+    expert_offsets,
+    out,
+    expert_capacity,
+    group_size_m,
+):
+    m, k = x_grouped.shape
+    n_experts, _, n = weight.shape
+    block_m = 64
+    block_n = 128
+    block_k = 32
+    max_m_tiles = triton.cdiv(expert_capacity, block_m)
+    grid = (max_m_tiles * triton.cdiv(n, block_n), n_experts)
+
+    triton_kernel.moe_grouped_expert_gemm_fwd_v2_fused_kernel[grid](
+        x_grouped,
+        weight,
+        expert_offsets,
+        out,
+        x_grouped.stride(0),
+        weight.stride(0),
+        weight.stride(1),
+        out.stride(0),
+        m,
+        n,
+        k,
+        n_experts,
+        expert_capacity,
+        group_size_m,
+        block_m,
+        block_n,
+        block_k,
+        num_warps=4,
+        num_stages=3,
+    )
+    return out
 
 
 @triton.testing.perf_report([
@@ -529,6 +579,106 @@ def bench_moe_grouped_expert_gemm_production(
     return ms, max_ms, min_ms
 
 
+@triton.testing.perf_report([
+    triton.testing.Benchmark(
+        x_names=['num_assignments'],
+        x_vals=[4096, 8192, 16384],
+        line_arg='group_size_m',
+        line_vals=GROUP_SIZE_M_VALUES,
+        line_names=GROUP_SIZE_M_NAMES,
+        styles=GROUP_SIZE_M_STYLES,
+        ylabel='ms',
+        plot_name='moe-grouped-expert-gemm-v2-forward-latency-group-size-production',
+        args={
+            'n_experts': 8,
+            'd_model': 4096,
+            'd_ff': 14336,
+            'routing': 'balanced',
+        },
+    ),
+    triton.testing.Benchmark(
+        x_names=['hot_expert_share'],
+        x_vals=[0.125, 0.25, 0.5, 0.75, 0.875],
+        line_arg='group_size_m',
+        line_vals=GROUP_SIZE_M_VALUES,
+        line_names=GROUP_SIZE_M_NAMES,
+        styles=GROUP_SIZE_M_STYLES,
+        ylabel='ms',
+        plot_name='moe-grouped-expert-gemm-v2-forward-latency-group-size-imbalance',
+        args={
+            'num_assignments': 4096,
+            'n_experts': 8,
+            'd_model': 256,
+            'd_ff': 1024,
+            'routing': 'imbalanced',
+        },
+    ),
+])
+def bench_moe_grouped_expert_gemm_v2_group_size(
+    num_assignments,
+    n_experts,
+    d_model,
+    d_ff,
+    routing,
+    group_size_m,
+    hot_expert_share=None,
+    device=torch.device('cuda'),
+):
+    dtype = torch.bfloat16
+    if routing == 'balanced':
+        expert_offsets, expert_capacity = make_balanced_expert_offsets(
+            num_assignments,
+            n_experts,
+            device,
+        )
+    elif routing == 'imbalanced':
+        expert_offsets, expert_capacity = make_imbalanced_expert_offsets(
+            num_assignments,
+            n_experts,
+            hot_expert_share,
+            device,
+        )
+    else:
+        raise ValueError(f'unknown routing: {routing}')
+
+    generator = torch.Generator(device=device).manual_seed(0)
+    x_grouped = torch.randn(
+        (num_assignments, d_model),
+        dtype=dtype,
+        device=device,
+        generator=generator,
+    )
+    weight = torch.randn(
+        (n_experts, d_model, d_ff),
+        dtype=dtype,
+        device=device,
+        generator=generator,
+    )
+    out = torch.empty(
+        (num_assignments, d_ff),
+        dtype=dtype,
+        device=device,
+    )
+    quantiles = [0.5, 0.2, 0.8]
+
+    def target_fn():
+        return launch_moe_grouped_expert_gemm_v2(
+            x_grouped,
+            weight,
+            expert_offsets,
+            out,
+            expert_capacity,
+            group_size_m,
+        )
+
+    # Compile the specialization before measuring kernel launch latency.
+    target_fn()
+    torch.cuda.synchronize()
+
+    ms, min_ms, max_ms = triton.testing.do_bench(target_fn, quantiles=quantiles, rep=500)
+    return ms, max_ms, min_ms
+
+
 if __name__ == '__main__':
     if not hasattr(F, 'grouped_mm'):
         raise RuntimeError(
@@ -540,3 +690,4 @@ if __name__ == '__main__':
     bench_moe_grouped_expert_gemm_imbalance.run(print_data=True, return_df=True)
     bench_moe_grouped_expert_gemm_capacity.run(print_data=True, return_df=True)
     bench_moe_grouped_expert_gemm_production.run(print_data=True, return_df=True)
+    bench_moe_grouped_expert_gemm_v2_group_size.run(print_data=True, return_df=True)
