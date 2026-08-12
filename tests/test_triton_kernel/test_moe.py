@@ -195,3 +195,59 @@ def test_grouped_expert_gemm_v2_autotuned_matches_torch(
     expected = torch_grouped_expert_gemm(x_grouped, w, expert_offsets)
 
     torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA required')
+@pytest.mark.parametrize(
+    ('expert_counts', 'k', 'n', 'num_sms'),
+    [
+        # More programs than tiles exercises persistent-grid overlaunch.
+        ([1, 0, 17, 5], 72, 257, 128),
+        # Two programs must repeatedly cross expert and grouped-M boundaries.
+        ([577, 33, 0, 129], 72, 257, 2),
+        # Eight experts require space for nine offsets, padded to sixteen.
+        ([0, 1, 0, 65, 3, 0, 129, 7], 128, 130, 3),
+    ],
+)
+@pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
+def test_grouped_expert_gemm_v3_matches_torch_with_persistent_scheduling(
+    expert_counts,
+    k,
+    n,
+    num_sms,
+    dtype,
+):
+    expert_offsets_values = [0]
+    for count in expert_counts:
+        expert_offsets_values.append(expert_offsets_values[-1] + count)
+
+    total_assignments = expert_offsets_values[-1]
+    n_experts = len(expert_counts)
+    generator = torch.Generator(device='cuda').manual_seed(0)
+
+    # Integer-valued inputs isolate scheduler errors from reduction-order noise.
+    x_grouped = torch.randint(
+        -1,
+        2,
+        (total_assignments, k),
+        device='cuda',
+        generator=generator,
+    ).to(dtype)
+    w = torch.randint(
+        -1,
+        2,
+        (n_experts, k, n),
+        device='cuda',
+        generator=generator,
+    ).to(dtype)
+    expert_offsets = torch.tensor(expert_offsets_values, dtype=torch.int32, device='cuda')
+
+    actual = triton_kernel.moe_grouped_expert_gemm_fwd_v3(
+        x_grouped,
+        w,
+        expert_offsets,
+        num_sms,
+    )
+    expected = torch_grouped_expert_gemm(x_grouped, w, expert_offsets)
+
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
