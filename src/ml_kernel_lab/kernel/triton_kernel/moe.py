@@ -527,15 +527,15 @@ def moe_grouped_expert_gemm_fwd_v3(
     expert_offsets = expert_offsets.contiguous()
 
     out = torch.empty((M, N), dtype=x_grouped.dtype, device=x_grouped.device)
-    GROUP_SIZE_M = 8
-    BLOCK_M = 64
+    GROUP_SIZE_M = 32
+    BLOCK_M = 128
     BLOCK_N = 128
-    BLOCK_K = 32
+    BLOCK_K = 64
 
     occupancy_multiplier = 1
 
     grid = (num_sms * occupancy_multiplier,)
-    num_warps = 4
+    num_warps = 8
 
     moe_grouped_expert_gemm_fwd_v3_fused_kernel[grid](
         x_grouped,
