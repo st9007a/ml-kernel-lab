@@ -5,20 +5,22 @@ import triton
 from ml_kernel_lab.kernel import triton_kernel
 
 
-PROVIDERS = ['triton', 'triton-autotuned', 'triton-v2', 'triton-v2-autotuned', 'torch-grouped-mm']
+PROVIDERS = ['triton', 'triton-autotuned', 'triton-v2', 'triton-v2-autotuned', 'triton-v3', 'torch-grouped-mm']
 PROVIDER_NAMES = [
     'Triton v1 Fixed',
     'Triton v1 Autotuned',
     'Triton v2',
     'Triton v2 Autotuned',
+    'Triton v3 Persistent',
     'Torch Grouped MM',
 ]
-PROVIDER_STYLES = [('blue', '-'), ('red', '-'), ('cyan', '-'), ('purple', '-'), ('green', '-')]
+PROVIDER_STYLES = [('blue', '-'), ('red', '-'), ('cyan', '-'), ('purple', '-'), ('black', '-'), ('green', '-')]
 PRODUCTION_PROVIDERS = [
     'triton',
     'triton-autotuned',
     'triton-v2',
     'triton-v2-autotuned',
+    'triton-v3',
     'torch-grouped-mm',
     'torch-grouped-mm.compile',
     'torch-grouped-mm.max-autotune',
@@ -28,6 +30,7 @@ PRODUCTION_PROVIDER_NAMES = [
     'Triton v1 Autotuned',
     'Triton v2',
     'Triton v2 Autotuned',
+    'Triton v3 Persistent',
     'Torch Grouped MM',
     'Torch Grouped MM Compile',
     'Torch Grouped MM Max Autotune',
@@ -37,6 +40,7 @@ PRODUCTION_PROVIDER_STYLES = [
     ('red', '-'),
     ('cyan', '-'),
     ('magenta', '-'),
+    ('black', '-'),
     ('green', '-'),
     ('purple', '-'),
     ('orange', '-'),
@@ -219,6 +223,7 @@ def bench_moe_grouped_expert_gemm(
     )
     w_grouped_mm = grouped_mm_weight_layout(w)
     grouped_mm_offsets = expert_offsets[1:]
+    num_sms = torch.cuda.get_device_properties(device).multi_processor_count
     quantiles = [0.5, 0.2, 0.8]
 
     def target_fn():
@@ -252,6 +257,14 @@ def bench_moe_grouped_expert_gemm(
                 w,
                 expert_offsets,
                 expert_capacity,
+            )
+
+        if provider == 'triton-v3':
+            return triton_kernel.moe_grouped_expert_gemm_fwd_v3(
+                x_triton,
+                w,
+                expert_offsets,
+                num_sms,
             )
 
         if provider == 'torch-grouped-mm':
@@ -325,6 +338,7 @@ def bench_moe_grouped_expert_gemm_imbalance(
     )
     w_grouped_mm = grouped_mm_weight_layout(w)
     grouped_mm_offsets = expert_offsets[1:]
+    num_sms = torch.cuda.get_device_properties(device).multi_processor_count
     quantiles = [0.5, 0.2, 0.8]
 
     def target_fn():
@@ -358,6 +372,14 @@ def bench_moe_grouped_expert_gemm_imbalance(
                 w,
                 expert_offsets,
                 expert_capacity,
+            )
+
+        if provider == 'triton-v3':
+            return triton_kernel.moe_grouped_expert_gemm_fwd_v3(
+                x_triton,
+                w,
+                expert_offsets,
+                num_sms,
             )
 
         if provider == 'torch-grouped-mm':
@@ -437,6 +459,7 @@ def bench_moe_grouped_expert_gemm_capacity(
     )
     w_grouped_mm = grouped_mm_weight_layout(w)
     grouped_mm_offsets = expert_offsets[1:]
+    num_sms = torch.cuda.get_device_properties(device).multi_processor_count
     quantiles = [0.5, 0.2, 0.8]
 
     def target_fn():
@@ -470,6 +493,14 @@ def bench_moe_grouped_expert_gemm_capacity(
                 w,
                 expert_offsets,
                 expert_capacity,
+            )
+
+        if provider == 'triton-v3':
+            return triton_kernel.moe_grouped_expert_gemm_fwd_v3(
+                x_triton,
+                w,
+                expert_offsets,
+                num_sms,
             )
 
         if provider == 'torch-grouped-mm':
@@ -552,6 +583,7 @@ def bench_moe_grouped_expert_gemm_production(
         generator=generator,
     )
     grouped_mm_offsets = expert_offsets[1:]
+    num_sms = torch.cuda.get_device_properties(device).multi_processor_count
     quantiles = [0.5, 0.2, 0.8]
 
     if provider == 'triton':
@@ -585,6 +617,14 @@ def bench_moe_grouped_expert_gemm_production(
                 weight,
                 expert_offsets,
                 expert_capacity,
+            )
+    elif provider == 'triton-v3':
+        def target_fn():
+            return triton_kernel.moe_grouped_expert_gemm_fwd_v3(
+                x_triton,
+                weight,
+                expert_offsets,
+                num_sms,
             )
     else:
         weight = grouped_mm_weight_layout(weight)
