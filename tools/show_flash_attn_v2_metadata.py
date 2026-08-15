@@ -24,8 +24,8 @@ class Case:
 
 @dataclass(frozen=True)
 class Config:
-    q_tile_size: int
-    k_tile_size: int
+    block_m: int
+    block_n: int
     num_warps: int
     num_stages: int
 
@@ -94,12 +94,9 @@ def warmup_case(case: Case, config: Config, device: torch.device) -> dict[str, A
     v = torch.empty_like(q)
     out = torch.empty_like(q)
 
-    n_q_tiles = triton.cdiv(case.seq_len, config.q_tile_size)
-    grid = (n_q_tiles, case.batch_size * case.n_heads)
-
-    pad_head_dim = triton.next_power_of_2(case.head_dim)
-    pad_q_tile_size = triton.next_power_of_2(config.q_tile_size)
-    pad_k_tile_size = triton.next_power_of_2(config.k_tile_size)
+    block_d = triton.next_power_of_2(case.head_dim)
+    num_m_tiles = triton.cdiv(case.seq_len, config.block_m)
+    grid = (num_m_tiles, case.batch_size * case.n_heads)
 
     compiled = RAW_KERNEL.warmup(
         q,
@@ -122,15 +119,13 @@ def warmup_case(case: Case, config: Config, device: torch.device) -> dict[str, A
         seq_len=case.seq_len,
         head_dim=case.head_dim,
         sm_scale=1.0 / math.sqrt(case.head_dim),
-        q_tile_size=config.q_tile_size,
-        k_tile_size=config.k_tile_size,
-        pad_head_dim=pad_head_dim,
-        pad_q_tile_size=pad_q_tile_size,
-        pad_k_tile_size=pad_k_tile_size,
         is_causal=case.is_causal,
-        EVEN_M=case.seq_len % config.q_tile_size == 0,
-        EVEN_N=case.seq_len % config.k_tile_size == 0,
-        EVEN_HEADDIM=case.head_dim == pad_head_dim,
+        BLOCK_M=config.block_m,
+        BLOCK_N=config.block_n,
+        BLOCK_D=block_d,
+        EVEN_M=case.seq_len % config.block_m == 0,
+        EVEN_N=case.seq_len % config.block_n == 0,
+        EVEN_D=case.head_dim == block_d,
         grid=grid,
         num_warps=config.num_warps,
         num_stages=config.num_stages,
@@ -147,8 +142,9 @@ def warmup_case(case: Case, config: Config, device: torch.device) -> dict[str, A
         "H": case.n_heads,
         "N": case.seq_len,
         "D": case.head_dim,
-        "Q": config.q_tile_size,
-        "KV": config.k_tile_size,
+        "BLOCK_M": config.block_m,
+        "BLOCK_N": config.block_n,
+        "BLOCK_D": block_d,
         "warps": config.num_warps,
         "stages": config.num_stages,
         "grid": f"{grid[0]}x{grid[1]}",
@@ -165,8 +161,9 @@ def print_rows(rows: list[dict[str, Any]]) -> None:
         "H",
         "N",
         "D",
-        "Q",
-        "KV",
+        "BLOCK_M",
+        "BLOCK_N",
+        "BLOCK_D",
         "warps",
         "stages",
         "grid",
@@ -212,8 +209,9 @@ def main() -> None:
                         "H": case.n_heads,
                         "N": case.seq_len,
                         "D": case.head_dim,
-                        "Q": config.q_tile_size,
-                        "KV": config.k_tile_size,
+                        "BLOCK_M": config.block_m,
+                        "BLOCK_N": config.block_n,
+                        "BLOCK_D": triton.next_power_of_2(case.head_dim),
                         "warps": config.num_warps,
                         "stages": config.num_stages,
                         "grid": "",
