@@ -5,6 +5,87 @@ import triton
 import triton.language as tl
 
 
+@triton.jit
+def flash_attention_inner_loop(
+    q_tile,
+    k_base_ptr,
+    v_base_ptr,
+    out_acc,
+    row_sum,
+    row_max,
+    offs_n,
+    offs_d,
+    q_rows,
+    range_start_n,
+    range_end_n,
+    k_stride_row,
+    v_stride_row,
+    seq_len,
+    head_dim: tl.constexpr,
+    sm_scale,
+    BLOCK_N: tl.constexpr,
+    APPLY_CAUSAL_MASK: tl.constexpr,
+    CHECK_KV_BOUNDS: tl.constexpr,
+    CHECK_D_BOUNDS: tl.constexpr,
+):
+    d_mask = offs_d[None, :] < head_dim
+
+    for start_n in tl.range(range_start_n, range_end_n, BLOCK_N):
+        start_n = tl.multiple_of(start_n, BLOCK_N)
+
+        # load k tile
+        kv_rows = start_n + offs_n
+        kv_mask = kv_rows[:, None] < seq_len
+        k_ptrs = k_base_ptr + kv_rows[:, None] * k_stride_row + offs_d[None, :]
+
+        if CHECK_KV_BOUNDS and CHECK_D_BOUNDS:
+            k_tile = tl.load(k_ptrs, mask=kv_mask & d_mask, other=0.)
+        elif CHECK_D_BOUNDS:
+            k_tile = tl.load(k_ptrs, mask=d_mask, other=0.)
+        elif CHECK_KV_BOUNDS:
+            k_tile = tl.load(k_ptrs, mask=kv_mask, other=0.)
+        else:
+            k_tile = tl.load(k_ptrs)
+
+        # s = q @ k^T
+        scores = tl.dot(q_tile, tl.trans(k_tile, (1, 0))) * sm_scale
+
+        if APPLY_CAUSAL_MASK:
+            score_mask = kv_rows[None, :] <= q_rows[:, None]
+            if CHECK_KV_BOUNDS:
+                score_mask &= kv_rows[None, :] < seq_len
+            scores = tl.where(score_mask, scores, -float('inf'))
+        elif CHECK_KV_BOUNDS:
+            score_mask = kv_rows[None, :] < seq_len
+            scores = tl.where(score_mask, scores, -float('inf'))
+
+        row_max_new = tl.maximum(row_max, tl.max(scores, axis=1))
+        probs = tl.exp(scores - row_max_new[:, None])
+
+        # load v tile
+        v_ptrs = v_base_ptr + kv_rows[:, None] * v_stride_row + offs_d[None, :]
+
+        if CHECK_KV_BOUNDS and CHECK_D_BOUNDS:
+            v_tile = tl.load(v_ptrs, mask=kv_mask & d_mask, other=0.)
+        elif CHECK_D_BOUNDS:
+            v_tile = tl.load(v_ptrs, mask=d_mask, other=0.)
+        elif CHECK_KV_BOUNDS:
+            v_tile = tl.load(v_ptrs, mask=kv_mask, other=0.)
+        else:
+            v_tile = tl.load(v_ptrs)
+
+        rescale = tl.exp(row_max - row_max_new)
+        row_sum_new = rescale * row_sum + tl.sum(probs, axis=1)
+
+        probs = probs.to(v_tile.dtype)
+        out_acc = out_acc * rescale[:, None] + tl.dot(probs, v_tile)
+
+        row_max = row_max_new
+        row_sum = row_sum_new
+
+    return out_acc, row_sum, row_max
+
+
 @triton.heuristics(
     {
         'EVEN_M': lambda args: args['seq_len'] % args['BLOCK_M'] == 0,
@@ -18,22 +99,22 @@ def flash_attention_v2_fwd_fused_kernel(
     k_ptr,
     v_ptr,
     out_ptr,
-    q_stride_b: tl.constexpr,
-    q_stride_h: tl.constexpr,
-    q_stride_n: tl.constexpr,
-    k_stride_b: tl.constexpr,
-    k_stride_h: tl.constexpr,
-    k_stride_n: tl.constexpr,
-    v_stride_b: tl.constexpr,
-    v_stride_h: tl.constexpr,
-    v_stride_n: tl.constexpr,
-    o_stride_b: tl.constexpr,
-    o_stride_h: tl.constexpr,
-    o_stride_n: tl.constexpr,
+    q_stride_b,
+    q_stride_h,
+    q_stride_n,
+    k_stride_b,
+    k_stride_h,
+    k_stride_n,
+    v_stride_b,
+    v_stride_h,
+    v_stride_n,
+    o_stride_b,
+    o_stride_h,
+    o_stride_n,
     n_heads: tl.constexpr,
-    seq_len: tl.constexpr,
+    seq_len,
     head_dim: tl.constexpr,
-    sm_scale: tl.constexpr,
+    sm_scale,
     is_causal: tl.constexpr,
     BLOCK_M: tl.constexpr,
     BLOCK_N: tl.constexpr,
@@ -83,59 +164,76 @@ def flash_attention_v2_fwd_fused_kernel(
     out_acc = tl.zeros((BLOCK_M, BLOCK_D), dtype=tl.float32)
 
     if is_causal:
-        end_n = tl.minimum((pid_m + 1) * BLOCK_M, seq_len)
+        out_acc, row_sum, row_max = flash_attention_inner_loop(
+            q_tile,
+            k_base_ptr,
+            v_base_ptr,
+            out_acc,
+            row_sum,
+            row_max,
+            offs_n,
+            offs_d,
+            q_rows,
+            0,
+            start_m,
+            k_stride_n,
+            v_stride_n,
+            seq_len,
+            head_dim,
+            sm_scale,
+            BLOCK_N=BLOCK_N,
+            APPLY_CAUSAL_MASK=False,
+            CHECK_KV_BOUNDS=False,
+            CHECK_D_BOUNDS=not EVEN_D,
+        )
+
+        diagonal_end_n = tl.minimum(start_m + BLOCK_M, seq_len)
+
+        out_acc, row_sum, row_max = flash_attention_inner_loop(
+            q_tile,
+            k_base_ptr,
+            v_base_ptr,
+            out_acc,
+            row_sum,
+            row_max,
+            offs_n,
+            offs_d,
+            q_rows,
+            start_m,
+            diagonal_end_n,
+            k_stride_n,
+            v_stride_n,
+            seq_len,
+            head_dim,
+            sm_scale,
+            BLOCK_N=BLOCK_N,
+            APPLY_CAUSAL_MASK=True,
+            CHECK_KV_BOUNDS=not EVEN_N,
+            CHECK_D_BOUNDS=not EVEN_D,
+        )
     else:
-        end_n = seq_len
-
-    # loop over k/v tiles
-    for start_n in tl.range(0, end_n, BLOCK_N):
-        start_n = tl.multiple_of(start_n, BLOCK_N)
-
-        # load k tile
-        kv_rows = start_n + offs_n
-        kv_mask = kv_rows[:, None] < seq_len
-        k_ptrs = k_base_ptr + kv_rows[:, None] * k_stride_n + offs_d[None, :]
-
-        if EVEN_N and EVEN_D:
-            k_tile = tl.load(k_ptrs)
-        elif EVEN_N:
-            k_tile = tl.load(k_ptrs, mask=d_mask, other=0.)
-        elif EVEN_D:
-            k_tile = tl.load(k_ptrs, mask=kv_mask, other=0.)
-        else:
-            k_tile = tl.load(k_ptrs, mask=kv_mask & d_mask, other=0.)
-
-        # s = q @ k^T
-        scores = tl.dot(q_tile, tl.trans(k_tile, (1, 0))) * sm_scale
-
-        if is_causal:
-            scores = tl.where((kv_rows[None, :] <= q_rows[:, None]) & (kv_rows[None, :] < seq_len), scores, -float('inf'))
-        else:
-            scores = tl.where(kv_rows[None, :] < seq_len, scores, -float('inf'))
-
-        row_max_new = tl.maximum(row_max, tl.max(scores, axis=1))
-        probs = tl.exp(scores - row_max_new[:, None])
-
-        # load v tile
-        v_ptrs = v_base_ptr + kv_rows[:, None] * v_stride_n + offs_d[None, :]
-
-        if EVEN_N and EVEN_D:
-            v_tile = tl.load(v_ptrs)
-        elif EVEN_N:
-            v_tile = tl.load(v_ptrs, mask=d_mask, other=0.)
-        elif EVEN_D:
-            v_tile = tl.load(v_ptrs, mask=kv_mask, other=0.)
-        else:
-            v_tile = tl.load(v_ptrs, mask=kv_mask & d_mask, other=0.)
-
-        rescale = tl.exp(row_max - row_max_new)
-        row_sum_new = rescale * row_sum + tl.sum(probs, axis=1)
-
-        probs = probs.to(v_tile.dtype)
-        out_acc = out_acc * rescale[:, None] + tl.dot(probs, v_tile)
-
-        row_max = row_max_new
-        row_sum = row_sum_new
+        out_acc, row_sum, row_max = flash_attention_inner_loop(
+            q_tile,
+            k_base_ptr,
+            v_base_ptr,
+            out_acc,
+            row_sum,
+            row_max,
+            offs_n,
+            offs_d,
+            q_rows,
+            0,
+            seq_len,
+            k_stride_n,
+            v_stride_n,
+            seq_len,
+            head_dim,
+            sm_scale,
+            BLOCK_N=BLOCK_N,
+            APPLY_CAUSAL_MASK=False,
+            CHECK_KV_BOUNDS=not EVEN_N,
+            CHECK_D_BOUNDS=not EVEN_D,
+        )
 
     out_tile = out_acc / row_sum[:, None]
 
