@@ -6,10 +6,10 @@ from typing import Any
 import torch
 import triton
 
-from ml_kernel_lab.kernel.triton_kernel.flash_attn_v1_gqa import flash_attention_v1_gqa_fwd_fused_kernel
+from ml_kernel_lab.kernel.triton_kernel.flash_attn_v2 import flash_attention_v2_gqa_fwd_fused_kernel
 
 
-RAW_KERNEL = getattr(flash_attention_v1_gqa_fwd_fused_kernel, "fn", flash_attention_v1_gqa_fwd_fused_kernel)
+RAW_KERNEL = getattr(flash_attention_v2_gqa_fwd_fused_kernel, "fn", flash_attention_v2_gqa_fwd_fused_kernel)
 
 
 @dataclass(frozen=True)
@@ -201,7 +201,7 @@ def print_rows(rows: list[dict[str, Any]]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Show FlashAttention v1 GQA Triton kernel metadata.")
+    parser = argparse.ArgumentParser(description="Show FlashAttention v2 GQA Triton kernel metadata.")
     parser.add_argument("--device", type=int, default=0)
     args = parser.parse_args()
 

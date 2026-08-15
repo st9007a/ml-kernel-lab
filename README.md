@@ -10,14 +10,13 @@
 * Masked Softmax
 * Flash Attention V1
 * Paged K/V Attention
-* Mixture of Experts
-  * Grouped GEMM of expert networks
+* Mixture of Experts: Grouped GEMM
 
 ### Performance
 
 See `benchmarks/triton_kernel/results`
 
-### Development
+## Development
 
 Install with editable mode + dev dependencies
 
@@ -32,3 +31,18 @@ uv pip install --system --break-system-packages -e . --group dev
 uv venv
 uv pip install -e . --group dev
 ```
+
+## TODO
+
+* Triton
+  * FA2
+  * INT8 Inference
+  * INT4 Inference
+* CUTLASS/CuTe
+  * FA3
+  * FA4
+* NCCL
+* Harness
+  * Correctness
+  * Benchmark
+  * Profiling
