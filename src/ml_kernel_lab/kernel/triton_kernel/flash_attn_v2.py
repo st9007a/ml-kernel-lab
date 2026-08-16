@@ -395,6 +395,48 @@ def flash_attention_v2_gqa_fwd_fused_kernel(
         tl.store(out_ptr + o_tile_offsets, o_tile, mask=(q_idx[:, None] < seq_len) & (d_offsets[None, :] < head_dim))
 
 
+flash_attention_v2_fwd_autotuned_fused_kernel = triton.autotune(
+    configs=[
+        triton.Config(
+            {'BLOCK_M': 64, 'BLOCK_N': 32},
+            num_warps=4,
+            num_stages=3,
+        ),
+        triton.Config(
+            {'BLOCK_M': 64, 'BLOCK_N': 64},
+            num_warps=4,
+            num_stages=3,
+        ),
+        triton.Config(
+            {'BLOCK_M': 128, 'BLOCK_N': 32},
+            num_warps=4,
+            num_stages=3,
+        ),
+        triton.Config(
+            {'BLOCK_M': 128, 'BLOCK_N': 64},
+            num_warps=4,
+            num_stages=3,
+        ),
+        triton.Config(
+            {'BLOCK_M': 128, 'BLOCK_N': 64},
+            num_warps=8,
+            num_stages=3,
+        ),
+        triton.Config(
+            {'BLOCK_M': 128, 'BLOCK_N': 128},
+            num_warps=4,
+            num_stages=3,
+        ),
+        triton.Config(
+            {'BLOCK_M': 128, 'BLOCK_N': 128},
+            num_warps=8,
+            num_stages=3,
+        ),
+    ],
+    key=['n_heads', 'seq_len', 'head_dim', 'is_causal'],
+)(flash_attention_v2_fwd_fused_kernel)
+
+
 def flash_attention_v2_fwd(
     q: torch.Tensor,
     k: torch.Tensor,
@@ -457,6 +499,66 @@ def flash_attention_v2_fwd(
         BLOCK_N,
         BLOCK_D,
         num_warps=num_warps,
+    )
+
+    return out
+
+
+def flash_attention_v2_fwd_autotuned(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    is_causal: bool = False,
+) -> torch.Tensor:
+    """
+    q = [B, H, Q, D]
+    k = [B, H, K, D]
+    v = [B, H, K, D]
+
+    # [B, H, Q, K] = [B, H, Q, D] @ [B, H, D, K]
+    weights = Q @ K^T / sqrt(head_dim)
+    # [B, H, Q, K]
+    scores = softmax(weights)
+    # [B, H, Q, D] = [B, H, Q, K] @ [B, H, K, D]
+    out = scores @ V
+    """
+    assert q.stride(-1) == 1
+    assert k.stride(-1) == 1
+    assert v.stride(-1) == 1
+    assert q.shape == k.shape == v.shape
+    assert q.dim() == 4
+
+    out = torch.empty_like(q)
+
+    B, H, N, D = q.shape
+
+    def grid(meta):
+        n_q_tiles = triton.cdiv(N, meta['BLOCK_M'])
+        return (n_q_tiles, B * H)
+
+    flash_attention_v2_fwd_autotuned_fused_kernel[grid](
+        q,
+        k,
+        v,
+        out,
+        q.stride(0),
+        q.stride(1),
+        q.stride(2),
+        k.stride(0),
+        k.stride(1),
+        k.stride(2),
+        v.stride(0),
+        v.stride(1),
+        v.stride(2),
+        out.stride(0),
+        out.stride(1),
+        out.stride(2),
+        H,
+        N,
+        D,
+        1.0 / math.sqrt(D),
+        is_causal,
+        BLOCK_D=triton.next_power_of_2(D),
     )
 
     return out
