@@ -67,6 +67,22 @@ compiled_torch_causal_attention_unfused = torch.compile(torch_causal_attention_u
         },
     ),
     triton.testing.Benchmark(
+        x_names=['seq_len'],
+        x_vals=[1024, 2048, 4096, 8192],
+        line_arg='provider',
+        line_vals=['triton', 'torch_sdpa'],
+        line_names=['Triton', 'Torch SDPA'],
+        styles=[('blue', '-'), ('purple', '-')],
+        ylabel='ms',
+        plot_name='flash-attn-v2-mha-causal-prefill-forward-latency-seq-len',
+        args={
+            'batch_size': 1,
+            'n_heads': 32,
+            'head_dim': 128,
+            'is_causal': True,
+        },
+    ),
+    triton.testing.Benchmark(
         x_names=['batch_size'],
         x_vals=[1, 2, 4, 8],
         line_arg='provider',
