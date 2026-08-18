@@ -16,7 +16,8 @@ RAW_KERNEL = getattr(flash_attention_v2_fwd_fused_kernel, "fn", flash_attention_
 class Case:
     name: str
     batch_size: int
-    n_heads: int
+    n_q_heads: int
+    n_kv_heads: int
     seq_len: int
     head_dim: int
     is_causal: bool = False
@@ -31,18 +32,20 @@ class Config:
 
 
 CASES = [
-    Case("seq_len_128", 1, 8, 128, 128),
-    Case("seq_len_256", 1, 8, 256, 128),
-    Case("seq_len_512", 1, 8, 512, 128),
-    Case("seq_len_1024", 1, 8, 1024, 128),
-    Case("causal_seq_len_128", 1, 8, 128, 128, True),
-    Case("causal_seq_len_256", 1, 8, 256, 128, True),
-    Case("causal_seq_len_512", 1, 8, 512, 128, True),
-    Case("causal_seq_len_1024", 1, 8, 1024, 128, True),
-    Case("batch_size_2", 2, 8, 512, 128),
-    Case("batch_size_4", 4, 8, 512, 128),
-    Case("batch_size_8", 8, 8, 512, 128),
-    Case("head_dim_64", 1, 8, 512, 64),
+    Case("seq_len_128", 1, 8, 8, 128, 128),
+    Case("seq_len_256", 1, 8, 8, 256, 128),
+    Case("seq_len_512", 1, 8, 8, 512, 128),
+    Case("seq_len_1024", 1, 8, 8, 1024, 128),
+    Case("causal_seq_len_128", 1, 8, 8, 128, 128, True),
+    Case("causal_seq_len_256", 1, 8, 8, 256, 128, True),
+    Case("causal_seq_len_512", 1, 8, 8, 512, 128, True),
+    Case("causal_seq_len_1024", 1, 8, 8, 1024, 128, True),
+    Case("batch_size_2", 2, 8, 8, 512, 128),
+    Case("batch_size_4", 4, 8, 8, 512, 128),
+    Case("batch_size_8", 8, 8, 8, 512, 128),
+    Case("head_dim_64", 1, 8, 8, 512, 64),
+    Case("gqa_group_4", 1, 32, 8, 1024, 128),
+    Case("gqa_group_4_causal", 1, 32, 8, 1024, 128, True),
 ]
 
 
@@ -88,15 +91,16 @@ def format_status(exc: Exception) -> str:
 
 def warmup_case(case: Case, config: Config, device: torch.device) -> dict[str, Any]:
     dtype = torch.bfloat16
-    shape = (case.batch_size, case.n_heads, case.seq_len, case.head_dim)
-    q = torch.empty(shape, dtype=dtype, device=device)
-    k = torch.empty_like(q)
-    v = torch.empty_like(q)
+    q_shape = (case.batch_size, case.n_q_heads, case.seq_len, case.head_dim)
+    kv_shape = (case.batch_size, case.n_kv_heads, case.seq_len, case.head_dim)
+    q = torch.empty(q_shape, dtype=dtype, device=device)
+    k = torch.empty(kv_shape, dtype=dtype, device=device)
+    v = torch.empty_like(k)
     out = torch.empty_like(q)
 
     block_d = triton.next_power_of_2(case.head_dim)
     num_m_tiles = triton.cdiv(case.seq_len, config.block_m)
-    grid = (num_m_tiles, case.batch_size * case.n_heads)
+    grid = (num_m_tiles, case.batch_size * case.n_q_heads)
 
     compiled = RAW_KERNEL.warmup(
         q,
@@ -115,7 +119,8 @@ def warmup_case(case: Case, config: Config, device: torch.device) -> dict[str, A
         out.stride(0),
         out.stride(1),
         out.stride(2),
-        n_heads=case.n_heads,
+        n_q_heads=case.n_q_heads,
+        n_kv_heads=case.n_kv_heads,
         seq_len=case.seq_len,
         head_dim=case.head_dim,
         sm_scale=1.0 / math.sqrt(case.head_dim),
@@ -139,7 +144,9 @@ def warmup_case(case: Case, config: Config, device: torch.device) -> dict[str, A
         "case": case.name,
         "mode": "causal" if case.is_causal else "plain",
         "B": case.batch_size,
-        "H": case.n_heads,
+        "Hq": case.n_q_heads,
+        "Hkv": case.n_kv_heads,
+        "group": case.n_q_heads // case.n_kv_heads,
         "N": case.seq_len,
         "D": case.head_dim,
         "BLOCK_M": config.block_m,
@@ -158,7 +165,9 @@ def print_rows(rows: list[dict[str, Any]]) -> None:
         "case",
         "mode",
         "B",
-        "H",
+        "Hq",
+        "Hkv",
+        "group",
         "N",
         "D",
         "BLOCK_M",
@@ -206,7 +215,9 @@ def main() -> None:
                         "case": case.name,
                         "mode": "causal" if case.is_causal else "plain",
                         "B": case.batch_size,
-                        "H": case.n_heads,
+                        "Hq": case.n_q_heads,
+                        "Hkv": case.n_kv_heads,
+                        "group": case.n_q_heads // case.n_kv_heads,
                         "N": case.seq_len,
                         "D": case.head_dim,
                         "BLOCK_M": config.block_m,

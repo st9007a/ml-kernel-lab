@@ -111,7 +111,8 @@ def flash_attention_v2_fwd_fused_kernel(
     o_stride_b,
     o_stride_h,
     o_stride_n,
-    n_heads: tl.constexpr,
+    n_q_heads: tl.constexpr,
+    n_kv_heads: tl.constexpr,
     seq_len,
     head_dim: tl.constexpr,
     sm_scale,
@@ -126,12 +127,13 @@ def flash_attention_v2_fwd_fused_kernel(
     pid_m = tl.program_id(0)  # q tile index
     pid_bh = tl.program_id(1)  # batch size, num heads
 
-    batch_idx = pid_bh // n_heads
-    head_idx = pid_bh % n_heads
+    batch_idx = pid_bh // n_q_heads
+    q_head_idx = pid_bh % n_q_heads
+    kv_head_idx = q_head_idx // (n_q_heads // n_kv_heads)
 
-    q_base_ptr = q_ptr + batch_idx * q_stride_b + head_idx * q_stride_h
-    k_base_ptr = k_ptr + batch_idx * k_stride_b + head_idx * k_stride_h
-    v_base_ptr = v_ptr + batch_idx * v_stride_b + head_idx * v_stride_h
+    q_base_ptr = q_ptr + batch_idx * q_stride_b + q_head_idx * q_stride_h
+    k_base_ptr = k_ptr + batch_idx * k_stride_b + kv_head_idx * k_stride_h
+    v_base_ptr = v_ptr + batch_idx * v_stride_b + kv_head_idx * v_stride_h
 
     offs_m = tl.arange(0, BLOCK_M)
     offs_n = tl.arange(0, BLOCK_N)
@@ -237,7 +239,7 @@ def flash_attention_v2_fwd_fused_kernel(
 
     out_tile = out_acc / row_sum[:, None]
 
-    out_base_ptr = out_ptr + batch_idx * o_stride_b + head_idx * o_stride_h
+    out_base_ptr = out_ptr + batch_idx * o_stride_b + q_head_idx * o_stride_h
     out_ptrs = out_base_ptr + q_rows[:, None] * o_stride_n + offs_d[None, :]
 
     if EVEN_M and EVEN_D:
@@ -443,7 +445,7 @@ flash_attention_v2_fwd_autotuned_fused_kernel = triton.autotune(
             num_stages=2,
         ),
     ],
-    key=['n_heads', 'seq_len', 'head_dim', 'is_causal'],
+    key=['n_q_heads', 'n_kv_heads', 'seq_len', 'head_dim', 'is_causal'],
 )(flash_attention_v2_fwd_fused_kernel)
 
 
@@ -454,9 +456,9 @@ def flash_attention_v2_fwd(
     is_causal: bool = False,
 ) -> torch.Tensor:
     """
-    q = [B, H, Q, D]
-    k = [B, H, K, D]
-    v = [B, H, K, D]
+    q = [B, Hq, Q, D]
+    k = [B, Hk, K, D]
+    v = [B, Hv, K, D]
 
     # [B, H, Q, K] = [B, H, Q, D] @ [B, H, D, K]
     weights = Q @ K^T / sqrt(head_dim)
@@ -468,19 +470,26 @@ def flash_attention_v2_fwd(
     assert q.stride(-1) == 1
     assert k.stride(-1) == 1
     assert v.stride(-1) == 1
-    assert q.shape == k.shape == v.shape
-    assert q.dim() == 4
+    assert q.dim() == k.dim() == v.dim() == 4
+    assert k.shape == v.shape
 
     out = torch.empty_like(q)
 
-    B, H, N, D = q.shape
+    B, Hq, N, D = q.shape
+    Bk, Hk, Nk, Dk = k.shape
+
+    assert B == Bk
+    assert N == Nk
+    assert D == Dk
+    assert Hq % Hk == 0
+    assert Hq >= Hk
 
     # TODO: tune tile size and consider SRAM size
     BLOCK_M = 128
     BLOCK_N = 32
     BLOCK_D = triton.next_power_of_2(D)
     n_q_tiles = triton.cdiv(N, BLOCK_M)
-    grid = (n_q_tiles, B * H)
+    grid = (n_q_tiles, B * Hq)
     num_warps = 4 if D <= 64 else 8
 
     flash_attention_v2_fwd_fused_kernel[grid](
@@ -500,7 +509,8 @@ def flash_attention_v2_fwd(
         out.stride(0),
         out.stride(1),
         out.stride(2),
-        H,
+        Hq,
+        Hk,
         N,
         D,
         1.0 / math.sqrt(D),
@@ -535,16 +545,23 @@ def flash_attention_v2_fwd_autotuned(
     assert q.stride(-1) == 1
     assert k.stride(-1) == 1
     assert v.stride(-1) == 1
-    assert q.shape == k.shape == v.shape
-    assert q.dim() == 4
+    assert q.dim() == k.dim() == v.dim() == 4
+    assert k.shape == v.shape
 
     out = torch.empty_like(q)
 
-    B, H, N, D = q.shape
+    B, Hq, N, D = q.shape
+    Bk, Hk, Nk, Dk = k.shape
+
+    assert B == Bk
+    assert N == Nk
+    assert D == Dk
+    assert Hq % Hk == 0
+    assert Hq >= Hk
 
     def grid(meta):
         n_q_tiles = triton.cdiv(N, meta['BLOCK_M'])
-        return (n_q_tiles, B * H)
+        return (n_q_tiles, B * Hq)
 
     flash_attention_v2_fwd_autotuned_fused_kernel[grid](
         q,
@@ -563,7 +580,8 @@ def flash_attention_v2_fwd_autotuned(
         out.stride(0),
         out.stride(1),
         out.stride(2),
-        H,
+        Hq,
+        Hk,
         N,
         D,
         1.0 / math.sqrt(D),
@@ -610,13 +628,14 @@ def flash_attention_v2_gqa_fwd(
     assert Hq >= Hk
 
     # TODO: tune tile size and consider SRAM size
-    q_tile_size = 128
-    k_tile_size = 32
-    n_q_tiles = triton.cdiv(N, q_tile_size)
+    BLOCK_M = 128
+    BLOCK_N = 32
+    BLOCK_D = triton.next_power_of_2(D)
+    n_q_tiles = triton.cdiv(N, BLOCK_M)
     grid = (n_q_tiles, B * Hq)
     num_warps = 4 if D <= 64 else 8
 
-    flash_attention_v2_gqa_fwd_fused_kernel[grid](
+    flash_attention_v2_fwd_fused_kernel[grid](
         q,
         k,
         v,
@@ -638,12 +657,10 @@ def flash_attention_v2_gqa_fwd(
         N,
         D,
         1.0 / math.sqrt(D),
-        q_tile_size,
-        k_tile_size,
-        triton.next_power_of_2(D),
-        triton.next_power_of_2(q_tile_size),
-        triton.next_power_of_2(k_tile_size),
         is_causal,
+        BLOCK_M,
+        BLOCK_N,
+        BLOCK_D,
         num_warps=num_warps,
     )
 

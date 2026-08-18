@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from ml_kernel_lab.kernel import triton_kernel
 
 
-MHA_IMPLEMENTATIONS = [
+FLASH_ATTENTION_V2_FWD_IMPLEMENTATIONS = [
     pytest.param(triton_kernel.flash_attention_v2_fwd, id='fixed'),
     pytest.param(triton_kernel.flash_attention_v2_fwd_autotuned, id='autotuned'),
 ]
@@ -29,7 +29,7 @@ def torch_causal_attention(q, k, v):
     ],
 )
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
-@pytest.mark.parametrize('mha_impl', MHA_IMPLEMENTATIONS)
+@pytest.mark.parametrize('mha_impl', FLASH_ATTENTION_V2_FWD_IMPLEMENTATIONS)
 def test_mha_matches_torch(shape, dtype, mha_impl):
     q = torch.randn(*shape, dtype=dtype, device='cuda')
     k = torch.randn(*shape, dtype=dtype, device='cuda')
@@ -51,7 +51,7 @@ def test_mha_matches_torch(shape, dtype, mha_impl):
     ],
 )
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
-@pytest.mark.parametrize('mha_impl', MHA_IMPLEMENTATIONS)
+@pytest.mark.parametrize('mha_impl', FLASH_ATTENTION_V2_FWD_IMPLEMENTATIONS)
 def test_causal_mha_matches_torch(shape, dtype, mha_impl):
     q = torch.randn(*shape, dtype=dtype, device='cuda')
     k = torch.randn(*shape, dtype=dtype, device='cuda')
@@ -65,7 +65,7 @@ def test_causal_mha_matches_torch(shape, dtype, mha_impl):
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA required')
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
-@pytest.mark.parametrize('mha_impl', MHA_IMPLEMENTATIONS)
+@pytest.mark.parametrize('mha_impl', FLASH_ATTENTION_V2_FWD_IMPLEMENTATIONS)
 def test_mha_matches_torch_non_contiguous_bhn(dtype, mha_impl):
     batch_size = 2
     seq_len = 77
@@ -87,7 +87,7 @@ def test_mha_matches_torch_non_contiguous_bhn(dtype, mha_impl):
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA required')
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
-@pytest.mark.parametrize('mha_impl', MHA_IMPLEMENTATIONS)
+@pytest.mark.parametrize('mha_impl', FLASH_ATTENTION_V2_FWD_IMPLEMENTATIONS)
 def test_causal_mha_matches_torch_non_contiguous_bhn(dtype, mha_impl):
     batch_size = 2
     seq_len = 77
@@ -131,12 +131,13 @@ def assert_attention_close(actual, expected, dtype):
     ],
 )
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
-def test_gqa_matches_torch(batch_size, n_q_heads, n_kv_heads, seq_len, head_dim, dtype):
+@pytest.mark.parametrize('gqa_impl', FLASH_ATTENTION_V2_FWD_IMPLEMENTATIONS)
+def test_gqa_matches_torch(batch_size, n_q_heads, n_kv_heads, seq_len, head_dim, dtype, gqa_impl):
     q = torch.randn((batch_size, n_q_heads, seq_len, head_dim), dtype=dtype, device='cuda')
     k = torch.randn((batch_size, n_kv_heads, seq_len, head_dim), dtype=dtype, device='cuda')
     v = torch.randn((batch_size, n_kv_heads, seq_len, head_dim), dtype=dtype, device='cuda')
 
-    actual = triton_kernel.flash_attention_v2_gqa_fwd(q, k, v)
+    actual = gqa_impl(q, k, v)
     expected = torch_gqa_attention(q, k, v)
 
     assert_attention_close(actual, expected, dtype)
@@ -152,12 +153,13 @@ def test_gqa_matches_torch(batch_size, n_q_heads, n_kv_heads, seq_len, head_dim,
     ],
 )
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
-def test_causal_gqa_matches_torch(batch_size, n_q_heads, n_kv_heads, seq_len, head_dim, dtype):
+@pytest.mark.parametrize('gqa_impl', FLASH_ATTENTION_V2_FWD_IMPLEMENTATIONS)
+def test_causal_gqa_matches_torch(batch_size, n_q_heads, n_kv_heads, seq_len, head_dim, dtype, gqa_impl):
     q = torch.randn((batch_size, n_q_heads, seq_len, head_dim), dtype=dtype, device='cuda')
     k = torch.randn((batch_size, n_kv_heads, seq_len, head_dim), dtype=dtype, device='cuda')
     v = torch.randn((batch_size, n_kv_heads, seq_len, head_dim), dtype=dtype, device='cuda')
 
-    actual = triton_kernel.flash_attention_v2_gqa_fwd(q, k, v, is_causal=True)
+    actual = gqa_impl(q, k, v, is_causal=True)
     expected = torch_gqa_attention(q, k, v, is_causal=True)
 
     assert_attention_close(actual, expected, dtype)
@@ -165,7 +167,8 @@ def test_causal_gqa_matches_torch(batch_size, n_q_heads, n_kv_heads, seq_len, he
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA required')
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
-def test_gqa_matches_torch_non_contiguous_bhn(dtype):
+@pytest.mark.parametrize('gqa_impl', FLASH_ATTENTION_V2_FWD_IMPLEMENTATIONS)
+def test_gqa_matches_torch_non_contiguous_bhn(dtype, gqa_impl):
     batch_size = 2
     seq_len = 77
     n_q_heads = 16
@@ -183,7 +186,7 @@ def test_gqa_matches_torch_non_contiguous_bhn(dtype):
     assert not k.is_contiguous()
     assert not v.is_contiguous()
 
-    actual = triton_kernel.flash_attention_v2_gqa_fwd(q, k, v)
+    actual = gqa_impl(q, k, v)
     expected = torch_gqa_attention(q, k, v)
 
     assert_attention_close(actual, expected, dtype)
@@ -191,7 +194,8 @@ def test_gqa_matches_torch_non_contiguous_bhn(dtype):
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='CUDA required')
 @pytest.mark.parametrize('dtype', [torch.float16, torch.bfloat16])
-def test_causal_gqa_matches_torch_non_contiguous_bhn(dtype):
+@pytest.mark.parametrize('gqa_impl', FLASH_ATTENTION_V2_FWD_IMPLEMENTATIONS)
+def test_causal_gqa_matches_torch_non_contiguous_bhn(dtype, gqa_impl):
     batch_size = 2
     seq_len = 77
     n_q_heads = 16
@@ -209,7 +213,7 @@ def test_causal_gqa_matches_torch_non_contiguous_bhn(dtype):
     assert not k.is_contiguous()
     assert not v.is_contiguous()
 
-    actual = triton_kernel.flash_attention_v2_gqa_fwd(q, k, v, is_causal=True)
+    actual = gqa_impl(q, k, v, is_causal=True)
     expected = torch_gqa_attention(q, k, v, is_causal=True)
 
     assert_attention_close(actual, expected, dtype)

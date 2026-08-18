@@ -134,9 +134,9 @@ def torch_gqa_attention(q, k, v, is_causal=False):
         x_names=['seq_len'],
         x_vals=[128, 256, 512, 1024],
         line_arg='provider',
-        line_vals=['triton', 'torch_sdpa_gqa'],
-        line_names=['Triton', 'Torch SDPA GQA'],
-        styles=[('blue', '-'), ('purple', '-')],
+        line_vals=['triton', 'triton_autotuned', 'torch_sdpa_gqa'],
+        line_names=['Triton Fixed', 'Triton Autotuned', 'Torch SDPA GQA'],
+        styles=[('blue', '-'), ('cyan', '-'), ('purple', '-')],
         ylabel='ms',
         plot_name='flash-attn-v2-gqa-forward-latency-seq-len',
         args={
@@ -150,9 +150,9 @@ def torch_gqa_attention(q, k, v, is_causal=False):
         x_names=['seq_len'],
         x_vals=[128, 256, 512, 1024],
         line_arg='provider',
-        line_vals=['triton', 'torch_sdpa_gqa'],
-        line_names=['Triton', 'Torch SDPA GQA'],
-        styles=[('blue', '-'), ('purple', '-')],
+        line_vals=['triton', 'triton_autotuned', 'torch_sdpa_gqa'],
+        line_names=['Triton Fixed', 'Triton Autotuned', 'Torch SDPA GQA'],
+        styles=[('blue', '-'), ('cyan', '-'), ('purple', '-')],
         ylabel='ms',
         plot_name='flash-attn-v2-gqa-causal-forward-latency-seq-len',
         args={
@@ -167,9 +167,9 @@ def torch_gqa_attention(q, k, v, is_causal=False):
         x_names=['n_kv_heads'],
         x_vals=[1, 2, 4, 8, 16, 32],
         line_arg='provider',
-        line_vals=['triton', 'torch_sdpa_gqa'],
-        line_names=['Triton', 'Torch SDPA GQA'],
-        styles=[('blue', '-'), ('purple', '-')],
+        line_vals=['triton', 'triton_autotuned', 'torch_sdpa_gqa'],
+        line_names=['Triton Fixed', 'Triton Autotuned', 'Torch SDPA GQA'],
+        styles=[('blue', '-'), ('cyan', '-'), ('purple', '-')],
         ylabel='ms',
         plot_name='flash-attn-v2-gqa-forward-latency-kv-heads',
         args={
@@ -183,9 +183,9 @@ def torch_gqa_attention(q, k, v, is_causal=False):
         x_names=['batch_size'],
         x_vals=[1, 2, 4, 8],
         line_arg='provider',
-        line_vals=['triton', 'torch_sdpa_gqa'],
-        line_names=['Triton', 'Torch SDPA GQA'],
-        styles=[('blue', '-'), ('purple', '-')],
+        line_vals=['triton', 'triton_autotuned', 'torch_sdpa_gqa'],
+        line_names=['Triton Fixed', 'Triton Autotuned', 'Torch SDPA GQA'],
+        styles=[('blue', '-'), ('cyan', '-'), ('purple', '-')],
         ylabel='ms',
         plot_name='flash-attn-v2-gqa-forward-latency-batch-size',
         args={
@@ -199,9 +199,9 @@ def torch_gqa_attention(q, k, v, is_causal=False):
         x_names=['head_dim'],
         x_vals=[64, 128],
         line_arg='provider',
-        line_vals=['triton', 'torch_sdpa_gqa'],
-        line_names=['Triton', 'Torch SDPA GQA'],
-        styles=[('blue', '-'), ('purple', '-')],
+        line_vals=['triton', 'triton_autotuned', 'torch_sdpa_gqa'],
+        line_names=['Triton Fixed', 'Triton Autotuned', 'Torch SDPA GQA'],
+        styles=[('blue', '-'), ('cyan', '-'), ('purple', '-')],
         ylabel='ms',
         plot_name='flash-attn-v2-gqa-forward-latency-head-dim',
         args={
@@ -230,7 +230,10 @@ def bench_flash_attn_v2_gqa(
 
     def target_fn():
         if provider == 'triton':
-            return triton_kernel.flash_attention_v2_gqa_fwd(q, k, v, is_causal=is_causal)
+            return triton_kernel.flash_attention_v2_fwd(q, k, v, is_causal=is_causal)
+
+        if provider == 'triton_autotuned':
+            return triton_kernel.flash_attention_v2_fwd_autotuned(q, k, v, is_causal=is_causal)
 
         if provider == 'torch_sdpa_gqa':
             return torch_gqa_attention(q, k, v, is_causal=is_causal)
